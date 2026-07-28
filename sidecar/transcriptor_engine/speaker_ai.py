@@ -15,11 +15,10 @@ import onnxruntime as ort
 from .paths import models_dir
 
 SAMPLE_RATE = 16_000
+SINGLE_PROFILE_ABSOLUTE_FLOOR = 0.72
+MULTI_PROFILE_ABSOLUTE_FLOOR = 0.70
 MODEL_NAME = "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx"
-MODEL_URL = (
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-    f"speaker-recongition-models/{MODEL_NAME}"
-)
+MODEL_URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/{MODEL_NAME}"
 MODEL_SHA256 = "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2"
 MODEL_BYTES = 28_281_164
 
@@ -137,9 +136,9 @@ class NeuralSpeakerEmbedder:
         fbank.input_finished()
         if fbank.num_frames_ready < 20:
             return None
-        features = np.stack(
-            [fbank.get_frame(index) for index in range(fbank.num_frames_ready)]
-        ).astype(np.float32)
+        features = np.stack([fbank.get_frame(index) for index in range(fbank.num_frames_ready)]).astype(
+            np.float32
+        )
         features -= features.mean(axis=0, keepdims=True)
         vector = self.session.run(None, {"x": features[None, :, :]})[0][0].astype(np.float32)
         norm = float(np.linalg.norm(vector))
@@ -173,48 +172,107 @@ class OnlineSpeakerIdentifier:
             for profile in (voice_profiles or [])
             if profile.get("enabled", True) and profile.get("centroid") is not None
         ]
+        self._profile_vectors: dict[str, np.ndarray] = {}
+        self._profiles_by_id: dict[str, dict[str, Any]] = {}
+        for profile in self.voice_profiles:
+            profile_id = str(profile.get("id") or "")
+            vector = _normalized_vector(profile.get("centroid"))
+            if profile_id and vector is not None:
+                self._profile_vectors[profile_id] = vector
+                self._profiles_by_id[profile_id] = profile
         self.centroids: list[np.ndarray] = []
         self.counts: list[int] = []
         self.cluster_profile_ids: list[str | None] = []
         self.cluster_names: list[str] = []
+        self.cluster_profile_ema: list[dict[str, float]] = []
+        self.cluster_profile_support: list[dict[str, int]] = []
+        self.cluster_profile_misses: list[int] = []
         self.previous: int | None = None
         self.backend = "neural" if self.embedder else "unavailable"
         self.last_embedding: np.ndarray | None = None
+        self.last_cluster_index: int | None = None
+        self.last_identity_changed = False
+        self.last_identity_previous_profile_id: str | None = None
+        self.last_identity_previous_name: str | None = None
         self.last_profile_id: str | None = None
+        self.last_profile_name: str | None = None
         self.last_profile_confidence: float | None = None
 
     def assign(self, audio: np.ndarray) -> tuple[str | None, float | None]:
+        self.last_cluster_index = None
+        self.last_identity_changed = False
+        self.last_identity_previous_profile_id = None
+        self.last_identity_previous_name = None
+        self.last_profile_id = None
+        self.last_profile_name = None
+        self.last_profile_confidence = None
         if not self.embedder:
             return None, None
         embedding = self.embedder.embedding(audio)
         self.last_embedding = embedding
-        self.last_profile_id = None
-        self.last_profile_confidence = None
         if embedding is None:
             return None, None
         if not self.centroids:
-            self.centroids.append(embedding)
-            self.counts.append(1)
-            self._identify_cluster(embedding)
+            self._append_cluster(embedding)
             self.previous = 0
+            self.last_cluster_index = 0
+            self._reevaluate_cluster(0, embedding)
+            self._set_last_profile_evidence(0, embedding)
             return self.cluster_names[0], 0.72
 
         similarities = [float(np.dot(embedding, centroid)) for centroid in self.centroids]
         nearest = int(np.argmax(similarities))
+        strong_profile = self._strong_instant_profile_candidate(embedding)
+        profile_routed = False
+        if strong_profile is not None:
+            candidate_id, _candidate_score = strong_profile
+            matching_clusters = [
+                index
+                for index, profile_id in enumerate(self.cluster_profile_ids)
+                if profile_id == candidate_id
+            ]
+            if matching_clusters:
+                best_known_cluster = max(
+                    matching_clusters,
+                    key=lambda index: similarities[index],
+                )
+                # A known identity is a stronger routing signal than two
+                # acoustically similar centroids. This matters especially for
+                # partners or relatives whose embeddings can be quite close.
+                if similarities[best_known_cluster] >= 0.42:
+                    nearest = best_known_cluster
+                    profile_routed = True
+            else:
+                nearest_profile_id = self.cluster_profile_ids[nearest]
+                if (
+                    nearest_profile_id is not None
+                    and nearest_profile_id != candidate_id
+                    and len(self.centroids) < self.max_speakers
+                    and audio.size >= round(SAMPLE_RATE * 0.72)
+                ):
+                    nearest = self._append_cluster(embedding)
+                    self.previous = nearest
+                    self.last_cluster_index = nearest
+                    self._reevaluate_cluster(nearest, embedding)
+                    self._set_last_profile_evidence(nearest, embedding)
+                    return self.cluster_names[nearest], 0.78
         new_speaker_similarity = 0.82 - self.sensitivity * 0.002
         if (
-            len(self.centroids) < self.max_speakers
+            not profile_routed
+            and len(self.centroids) < self.max_speakers
             and similarities[nearest] < new_speaker_similarity
             and audio.size >= round(SAMPLE_RATE * 0.72)
         ):
-            self.centroids.append(embedding)
-            self.counts.append(1)
-            self._identify_cluster(embedding)
-            self.previous = len(self.centroids) - 1
-            return self.cluster_names[-1], 0.7
+            nearest = self._append_cluster(embedding)
+            self.previous = nearest
+            self.last_cluster_index = nearest
+            self._reevaluate_cluster(nearest, embedding)
+            self._set_last_profile_evidence(nearest, embedding)
+            return self.cluster_names[nearest], 0.7
 
         if (
-            self.previous is not None
+            not profile_routed
+            and self.previous is not None
             and self.previous < len(similarities)
             and similarities[self.previous] >= similarities[nearest] - 0.035
         ):
@@ -228,42 +286,212 @@ class OnlineSpeakerIdentifier:
             centroid = self.centroids[nearest] * (1 - weight) + embedding * weight
             self.centroids[nearest] = centroid / max(float(np.linalg.norm(centroid)), 1e-8)
         self.previous = nearest
-        self.last_profile_id = self.cluster_profile_ids[nearest]
-        if self.last_profile_id:
-            profile = next(
-                (item for item in self.voice_profiles if item.get("id") == self.last_profile_id),
-                None,
-            )
-            if profile is not None:
-                self.last_profile_confidence = float(
-                    np.dot(embedding, np.asarray(profile["centroid"], dtype=np.float32))
-                )
+        self.last_cluster_index = nearest
+        self._reevaluate_cluster(nearest, embedding)
+        self._set_last_profile_evidence(nearest, embedding)
         return self.cluster_names[nearest], confidence
 
-    def _identify_cluster(self, embedding: np.ndarray) -> None:
-        used = {profile_id for profile_id in self.cluster_profile_ids if profile_id}
-        candidates: list[tuple[float, dict[str, Any]]] = []
-        for profile in self.voice_profiles:
-            if str(profile.get("id")) in used:
-                continue
-            centroid = np.asarray(profile["centroid"], dtype=np.float32)
-            score = float(np.dot(embedding, centroid))
-            candidates.append((score, profile))
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        selected: dict[str, Any] | None = None
-        score: float | None = None
-        if candidates:
-            best_score, best = candidates[0]
-            threshold = float(best.get("matchThreshold", 0.64))
-            margin = best_score - candidates[1][0] if len(candidates) > 1 else 1.0
-            if best_score >= threshold and margin >= 0.025:
-                selected, score = best, best_score
-        self.cluster_profile_ids.append(str(selected["id"]) if selected else None)
-        self.cluster_names.append(
-            str(selected["name"]) if selected else f"Hablante {len(self.cluster_names) + 1}"
+    def _strong_instant_profile_candidate(
+        self,
+        embedding: np.ndarray,
+    ) -> tuple[str, float] | None:
+        scores = sorted(
+            self._profile_scores(embedding).items(),
+            key=lambda item: item[1],
+            reverse=True,
         )
-        self.last_profile_id = str(selected["id"]) if selected else None
-        self.last_profile_confidence = score
+        if not scores:
+            return None
+        profile_id, score = scores[0]
+        alternative = scores[1][1] if len(scores) > 1 else None
+        margin = score - alternative if alternative is not None else 1.0
+        profile = self._profiles_by_id[profile_id]
+        threshold = _required_profile_score(
+            float(profile.get("matchThreshold", 0.64)),
+            len(self._profile_vectors),
+        )
+        if score >= max(0.76, threshold + 0.04) and margin >= 0.06:
+            return profile_id, score
+        return None
+
+    def _append_cluster(self, embedding: np.ndarray) -> int:
+        index = len(self.centroids)
+        self.centroids.append(embedding)
+        self.counts.append(1)
+        self.cluster_profile_ids.append(None)
+        self.cluster_names.append(f"Hablante {index + 1}")
+        self.cluster_profile_ema.append({})
+        self.cluster_profile_support.append({})
+        self.cluster_profile_misses.append(0)
+        return index
+
+    def _identify_cluster(self, embedding: np.ndarray) -> None:
+        """Initialise profile state for a centroid appended by an older caller."""
+        if not self.centroids:
+            cluster_index = self._append_cluster(embedding)
+        elif len(self.cluster_profile_ids) < len(self.centroids):
+            cluster_index = len(self.cluster_profile_ids)
+            self.cluster_profile_ids.append(None)
+            self.cluster_names.append(f"Hablante {cluster_index + 1}")
+            self.cluster_profile_ema.append({})
+            self.cluster_profile_support.append({})
+            self.cluster_profile_misses.append(0)
+        else:
+            cluster_index = len(self.centroids) - 1
+        self.last_cluster_index = cluster_index
+        self._reevaluate_cluster(cluster_index, embedding)
+        self._set_last_profile_evidence(cluster_index, embedding)
+
+    def _reevaluate_cluster(self, cluster_index: int, embedding: np.ndarray) -> None:
+        if not self._profile_vectors:
+            return
+        scores = self._profile_scores(embedding)
+        if not scores:
+            return
+
+        ema = self.cluster_profile_ema[cluster_index]
+        for profile_id, score in scores.items():
+            previous = ema.get(profile_id)
+            ema[profile_id] = score if previous is None else previous * 0.62 + score * 0.38
+
+        centroid_scores = self._profile_scores(self.centroids[cluster_index])
+        evidence = {
+            profile_id: (
+                scores[profile_id] * 0.55
+                + ema[profile_id] * 0.25
+                + centroid_scores.get(profile_id, scores[profile_id]) * 0.20
+            )
+            for profile_id in scores
+        }
+        ordered = sorted(evidence.items(), key=lambda item: item[1], reverse=True)
+        candidate_id, candidate_score = ordered[0]
+        alternative_score = ordered[1][1] if len(ordered) > 1 else None
+        margin = candidate_score - alternative_score if alternative_score is not None else 1.0
+        candidate_profile = self._profiles_by_id[candidate_id]
+        configured_threshold = float(candidate_profile.get("matchThreshold", 0.64))
+        threshold = _required_profile_score(
+            configured_threshold,
+            len(self._profile_vectors),
+        )
+        instant_score = scores[candidate_id]
+        qualifies = (
+            candidate_score >= threshold
+            and instant_score >= threshold - 0.025
+            and margin >= 0.025
+            and self._duplicate_profile_is_safe(
+                cluster_index,
+                candidate_id,
+                instant_score,
+                candidate_score,
+                margin,
+                threshold,
+            )
+        )
+
+        support = self.cluster_profile_support[cluster_index]
+        if qualifies:
+            support[candidate_id] = support.get(candidate_id, 0) + 1
+            for profile_id in list(support):
+                if profile_id != candidate_id:
+                    support[profile_id] = 0
+        else:
+            for profile_id in list(support):
+                support[profile_id] = 0
+
+        current_id = self.cluster_profile_ids[cluster_index]
+        if current_id == candidate_id and qualifies:
+            self.cluster_profile_misses[cluster_index] = 0
+            return
+
+        if current_id is None:
+            exceptionally_clear = (
+                instant_score >= max(0.90, threshold + 0.12)
+                and candidate_score >= threshold + 0.08
+                and margin >= 0.06
+            )
+            if qualifies and (support.get(candidate_id, 0) >= 2 or exceptionally_clear):
+                self._set_cluster_identity(cluster_index, candidate_profile)
+            return
+
+        current_profile = self._profiles_by_id.get(current_id)
+        current_threshold = _required_profile_score(
+            float(current_profile.get("matchThreshold", 0.64) if current_profile else 0.64),
+            len(self._profile_vectors),
+        )
+        current_score = scores.get(current_id, -1.0)
+        if qualifies and candidate_id != current_id:
+            clear_switch = (
+                support.get(candidate_id, 0) >= 3
+                and candidate_score >= threshold + 0.035
+                and margin >= 0.045
+                and (current_score < current_threshold - 0.025 or instant_score >= current_score + 0.075)
+            )
+            if clear_switch:
+                self._set_cluster_identity(cluster_index, candidate_profile)
+                self.cluster_profile_misses[cluster_index] = 0
+                return
+
+        if current_score < current_threshold - 0.08:
+            self.cluster_profile_misses[cluster_index] += 1
+        else:
+            self.cluster_profile_misses[cluster_index] = 0
+        if self.cluster_profile_misses[cluster_index] >= 4:
+            self._set_cluster_identity(cluster_index, None)
+            self.cluster_profile_misses[cluster_index] = 0
+
+    def _profile_scores(self, embedding: np.ndarray) -> dict[str, float]:
+        return {
+            profile_id: float(np.dot(embedding, centroid))
+            for profile_id, centroid in self._profile_vectors.items()
+            if embedding.shape == centroid.shape
+        }
+
+    def _duplicate_profile_is_safe(
+        self,
+        cluster_index: int,
+        profile_id: str,
+        instant_score: float,
+        evidence_score: float,
+        margin: float,
+        threshold: float,
+    ) -> bool:
+        siblings = [
+            index
+            for index, assigned_profile_id in enumerate(self.cluster_profile_ids)
+            if index != cluster_index and assigned_profile_id == profile_id
+        ]
+        if not siblings:
+            return True
+        sibling_similarity = max(
+            float(np.dot(self.centroids[cluster_index], self.centroids[index])) for index in siblings
+        )
+        return (
+            instant_score >= max(0.72, threshold + 0.04)
+            and evidence_score >= threshold + 0.035
+            and margin >= 0.04
+            and sibling_similarity >= max(0.68, threshold + 0.025)
+        )
+
+    def _set_cluster_identity(self, cluster_index: int, profile: dict[str, Any] | None) -> None:
+        previous_profile_id = self.cluster_profile_ids[cluster_index]
+        previous_name = self.cluster_names[cluster_index]
+        profile_id = str(profile["id"]) if profile else None
+        name = str(profile["name"]) if profile else f"Hablante {cluster_index + 1}"
+        if previous_profile_id == profile_id and previous_name == name:
+            return
+        self.cluster_profile_ids[cluster_index] = profile_id
+        self.cluster_names[cluster_index] = name
+        self.last_identity_changed = True
+        self.last_identity_previous_profile_id = previous_profile_id
+        self.last_identity_previous_name = previous_name
+
+    def _set_last_profile_evidence(self, cluster_index: int, embedding: np.ndarray) -> None:
+        profile_id = self.cluster_profile_ids[cluster_index]
+        self.last_profile_id = profile_id
+        self.last_profile_name = self.cluster_names[cluster_index] if profile_id is not None else None
+        profile_centroid = self._profile_vectors.get(profile_id or "")
+        if profile_centroid is not None and profile_centroid.shape == embedding.shape:
+            self.last_profile_confidence = max(0.0, min(1.0, float(np.dot(embedding, profile_centroid))))
 
 
 def neural_assign_speakers(
@@ -286,6 +514,12 @@ def neural_assign_speakers(
     for index, unit in enumerate(units):
         start = max(0, round((unit["startMs"] - 120) * SAMPLE_RATE / 1000))
         end = min(audio.size, round((unit["endMs"] + 120) * SAMPLE_RATE / 1000))
+        minimum_window = round(SAMPLE_RATE * 0.8)
+        if end - start < minimum_window:
+            missing = minimum_window - (end - start)
+            start = max(0, start - missing // 2)
+            end = min(audio.size, end + (minimum_window - (end - start)))
+            start = max(0, end - minimum_window)
         vector = embedder.embedding(audio[start:end])
         vectors.append(vector)
         if vector is not None:
@@ -310,6 +544,14 @@ def neural_assign_speakers(
         exact_speaker_count=exact_speaker_count,
         sensitivity=sensitivity,
     )
+    if not exact_speaker_count and voice_profiles:
+        target = max(
+            target,
+            min(
+                max(1, min(int(speaker_count), 8, matrix.shape[0])),
+                _known_profile_anchor_count(matrix, voice_profiles),
+            ),
+        )
     labels, confidences = _cluster_embeddings(matrix, target)
     unit_labels: list[int | None] = [None] * len(units)
     unit_confidences: list[float | None] = [None] * len(units)
@@ -339,31 +581,78 @@ def neural_assign_speakers(
                 "endMs": int(unit["endMs"]),
                 "durationMs": int(unit["endMs"]) - int(unit["startMs"]),
                 "confidence": float(confidences[position]),
+                "_unitIndex": unit_index,
             }
         )
-    cluster_centroids = {
-        label: _normalized_mean(items) for label, items in cluster_vectors.items() if items
-    }
+    cluster_centroids = {label: _normalized_mean(items) for label, items in cluster_vectors.items() if items}
     profile_matches = _match_clusters_to_profiles(cluster_centroids, voice_profiles or [])
+    unit_profile_overrides: dict[int, dict[str, Any]] = {}
+    for unit_index, unit_vector in enumerate(vectors):
+        unit_duration = int(units[unit_index]["endMs"]) - int(
+            units[unit_index]["startMs"]
+        )
+        if unit_vector is None or unit_duration < 800:
+            continue
+        exceptional_match = _exceptional_profile_match(
+            unit_vector,
+            voice_profiles or [],
+        )
+        if exceptional_match is not None:
+            unit_profile_overrides[unit_index] = exceptional_match
+
+    for raw_label, samples in list(cluster_samples.items()):
+        cluster_match = profile_matches.get(raw_label)
+        if not cluster_match:
+            continue
+        cluster_samples[raw_label] = [
+            sample
+            for sample in samples
+            if not (
+                (unit_match := unit_profile_overrides.get(int(sample["_unitIndex"])))
+                and str(cluster_match.get("id")) != str(unit_match.get("id"))
+            )
+        ]
+    for raw_label, samples in cluster_samples.items():
+        profile_match = profile_matches.get(raw_label)
+        if not profile_match:
+            continue
+        profile_vector = _normalized_vector(profile_match.get("centroid"))
+        if profile_vector is None:
+            continue
+        for sample in samples:
+            sample_vector = _normalized_vector(sample.get("embedding"))
+            sample["matchConfidence"] = (
+                max(0.0, min(1.0, float(np.dot(sample_vector, profile_vector))))
+                if sample_vector is not None and sample_vector.shape == profile_vector.shape
+                else None
+            )
+            sample.pop("_unitIndex", None)
+    for samples in cluster_samples.values():
+        for sample in samples:
+            sample.pop("_unitIndex", None)
 
     output = []
     for index, unit in enumerate(units):
         raw_label = unit_labels[index] if unit_labels[index] is not None else 0
         visible_label = first_seen.setdefault(raw_label, len(first_seen))
-        profile_match = profile_matches.get(raw_label)
+        profile_match = unit_profile_overrides.get(index) or profile_matches.get(raw_label)
+        profile_vector = _normalized_vector(profile_match.get("centroid")) if profile_match else None
+        unit_vector = vectors[index]
+        match_confidence = (
+            max(0.0, min(1.0, float(np.dot(unit_vector, profile_vector))))
+            if unit_vector is not None
+            and profile_vector is not None
+            and unit_vector.shape == profile_vector.shape
+            else None
+        )
         output.append(
             {
                 **unit,
-                "speaker": (
-                    str(profile_match["name"])
-                    if profile_match
-                    else f"Hablante {visible_label + 1}"
-                ),
+                "speaker": (str(profile_match["name"]) if profile_match else f"Hablante {visible_label + 1}"),
                 "speakerConfidence": unit_confidences[index],
+                "speakerClusterIndex": visible_label,
                 "speakerProfileId": str(profile_match["id"]) if profile_match else None,
-                "speakerMatchConfidence": (
-                    float(profile_match["score"]) if profile_match else None
-                ),
+                "speakerMatchConfidence": match_confidence,
                 "speakerProvisional": False,
                 "order": index,
             }
@@ -377,15 +666,22 @@ def neural_assign_speakers(
             profile_observations.append(
                 {
                     "cluster": visible_label + 1,
-                    "suggestedName": (
-                        str(match["name"]) if match else f"Hablante {visible_label + 1}"
-                    ),
+                    "suggestedName": (str(match["name"]) if match else f"Hablante {visible_label + 1}"),
                     "matchedProfileId": str(match["id"]) if match else None,
                     "matchConfidence": float(match["score"]) if match else None,
                     "centroid": centroid.tolist(),
                     "samples": cluster_samples.get(raw_label, []),
                 }
             )
+    detected_speaker_keys = {
+        (
+            str(item.get("speakerProfileId"))
+            if item.get("speakerProfileId")
+            else str(item.get("speaker"))
+        )
+        for item in output
+    }
+    detected_speaker_count = max(1, len(detected_speaker_keys))
     if progress:
         progress(
             {
@@ -393,10 +689,13 @@ def neural_assign_speakers(
                 "completedUnits": total,
                 "totalUnits": total,
                 "percent": 100,
-                "message": f"{len(first_seen)} voces alineadas con {total} intervenciones.",
+                "message": (
+                    f"{detected_speaker_count} voces alineadas con "
+                    f"{total} intervenciones."
+                ),
             }
         )
-    return output, len(first_seen)
+    return output, detected_speaker_count
 
 
 def _normalized_mean(vectors: list[np.ndarray]) -> np.ndarray:
@@ -404,42 +703,171 @@ def _normalized_mean(vectors: list[np.ndarray]) -> np.ndarray:
     return centroid / max(float(np.linalg.norm(centroid)), 1e-8)
 
 
+def _normalized_vector(value: Any) -> np.ndarray | None:
+    try:
+        vector = np.asarray(value, dtype=np.float32)
+    except (TypeError, ValueError):
+        return None
+    if vector.ndim != 1 or vector.size == 0 or not np.isfinite(vector).all():
+        return None
+    norm = float(np.linalg.norm(vector))
+    return vector / norm if norm > 1e-8 else None
+
+
+def _required_profile_score(configured_threshold: float, profile_count: int) -> float:
+    """Require open-set evidence in addition to any relative cohort margin."""
+    threshold = max(0.0, min(1.0, float(configured_threshold)))
+    return (
+        max(threshold, SINGLE_PROFILE_ABSOLUTE_FLOOR)
+        if profile_count == 1
+        else max(threshold, MULTI_PROFILE_ABSOLUTE_FLOOR)
+    )
+
+
+def _known_profile_anchor_count(
+    matrix: np.ndarray,
+    voice_profiles: list[dict[str, Any]],
+) -> int:
+    """Keep a clearly present known voice from disappearing as a small cluster."""
+    profiles: list[tuple[str, float, np.ndarray]] = []
+    for profile in voice_profiles:
+        vector = _normalized_vector(profile.get("centroid"))
+        if not profile.get("enabled", True) or vector is None:
+            continue
+        profiles.append(
+            (
+                str(profile.get("id") or ""),
+                float(profile.get("matchThreshold", 0.64)),
+                vector,
+            )
+        )
+    if not profiles:
+        return 1
+
+    support: dict[str, int] = {}
+    for embedding in matrix:
+        scores = sorted(
+            (
+                (float(np.dot(embedding, vector)), profile_id, threshold)
+                for profile_id, threshold, vector in profiles
+                if embedding.shape == vector.shape
+            ),
+            reverse=True,
+        )
+        if not scores:
+            continue
+        best_score, profile_id, threshold = scores[0]
+        alternative = scores[1][0] if len(scores) > 1 else None
+        margin = best_score - alternative if alternative is not None else 1.0
+        required = _required_profile_score(threshold + 0.02, len(profiles))
+        if best_score >= required and margin >= 0.035:
+            support[profile_id] = support.get(profile_id, 0) + 1
+    anchored = sum(1 for count in support.values() if count >= 2)
+    return max(1, anchored)
+
+
+def _exceptional_profile_match(
+    embedding: np.ndarray,
+    voice_profiles: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Recognize one very clear cameo without inventing a general cluster."""
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for profile in voice_profiles:
+        vector = _normalized_vector(profile.get("centroid"))
+        if not profile.get("enabled", True) or vector is None:
+            continue
+        if embedding.shape == vector.shape:
+            candidates.append((float(np.dot(embedding, vector)), profile))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    if not candidates:
+        return None
+    score, profile = candidates[0]
+    alternative = candidates[1][0] if len(candidates) > 1 else None
+    margin = score - alternative if alternative is not None else 1.0
+    threshold = float(profile.get("matchThreshold", 0.64))
+    if score >= max(0.86, threshold + 0.16) and margin >= 0.12:
+        return {**profile, "score": score}
+    return None
+
+
 def _match_clusters_to_profiles(
     cluster_centroids: dict[int, np.ndarray],
     voice_profiles: list[dict[str, Any]],
 ) -> dict[int, dict[str, Any]]:
-    profiles = [
-        profile
-        for profile in voice_profiles
-        if profile.get("enabled", True) and profile.get("centroid") is not None
-    ]
-    candidates: list[tuple[float, int, dict[str, Any]]] = []
-    for label, centroid in cluster_centroids.items():
+    profiles: list[tuple[dict[str, Any], np.ndarray]] = []
+    for profile in voice_profiles:
+        vector = _normalized_vector(profile.get("centroid"))
+        if profile.get("enabled", True) and vector is not None:
+            profiles.append((profile, vector))
+
+    normalized_clusters = {
+        label: vector
+        for label, centroid in cluster_centroids.items()
+        if (vector := _normalized_vector(centroid)) is not None
+    }
+    candidates: list[dict[str, Any]] = []
+    for label, centroid in normalized_clusters.items():
         scores = sorted(
             [
-                (
-                float(np.dot(centroid, np.asarray(profile["centroid"], dtype=np.float32))),
-                profile,
-                )
-                for profile in profiles
+                (float(np.dot(centroid, profile_vector)), profile)
+                for profile, profile_vector in profiles
+                if centroid.shape == profile_vector.shape
             ],
             key=lambda item: item[0],
             reverse=True,
         )
-        for index, (score, profile) in enumerate(scores):
-            threshold = float(profile.get("matchThreshold", 0.64))
-            alternative = scores[1][0] if index == 0 and len(scores) > 1 else None
-            if score >= threshold and (alternative is None or score - alternative >= 0.025):
-                candidates.append((score, label, profile))
-    candidates.sort(key=lambda item: item[0], reverse=True)
+        if not scores:
+            continue
+        score, profile = scores[0]
+        alternative = scores[1][0] if len(scores) > 1 else None
+        margin = score - alternative if alternative is not None else 1.0
+        threshold = float(profile.get("matchThreshold", 0.64))
+        required = _required_profile_score(threshold, len(profiles))
+        if score >= required and margin >= 0.025:
+            candidates.append(
+                {
+                    "label": label,
+                    "profile": profile,
+                    "score": score,
+                    "margin": margin,
+                    "threshold": threshold,
+                    "required": required,
+                }
+            )
+
+    candidates.sort(key=lambda item: float(item["score"]), reverse=True)
     matches: dict[int, dict[str, Any]] = {}
-    used_profiles: set[str] = set()
-    for score, label, profile in candidates:
+    matched_clusters_by_profile: dict[str, list[int]] = {}
+    for candidate in candidates:
+        label = int(candidate["label"])
+        profile = candidate["profile"]
+        score = float(candidate["score"])
+        margin = float(candidate["margin"])
+        threshold = float(candidate["threshold"])
+        required = float(candidate["required"])
         profile_id = str(profile["id"])
-        if label in matches or profile_id in used_profiles:
+        siblings = matched_clusters_by_profile.get(profile_id, [])
+        if siblings:
+            sibling_similarity = max(
+                float(
+                    np.dot(
+                        normalized_clusters[label],
+                        normalized_clusters[sibling_label],
+                    )
+                )
+                for sibling_label in siblings
+            )
+            duplicate_is_safe = (
+                score >= max(0.72, required + 0.04)
+                and margin >= 0.04
+                and sibling_similarity >= max(0.68, threshold + 0.025)
+            )
+            if not duplicate_is_safe:
+                continue
+        if label in matches:
             continue
         matches[label] = {**profile, "score": score}
-        used_profiles.add(profile_id)
+        matched_clusters_by_profile.setdefault(profile_id, []).append(label)
     return matches
 
 
@@ -592,9 +1020,7 @@ def _cosine_silhouette(matrix: np.ndarray, labels: np.ndarray, clusters: int) ->
     return float(np.mean(scores)) if scores else 0.0
 
 
-def _fill_and_smooth_labels(
-    labels: list[int | None], confidences: list[float | None]
-) -> None:
+def _fill_and_smooth_labels(labels: list[int | None], confidences: list[float | None]) -> None:
     previous = 0
     for index, label in enumerate(labels):
         if label is None:
@@ -603,10 +1029,7 @@ def _fill_and_smooth_labels(
         else:
             previous = label
     for index in range(1, len(labels) - 1):
-        if (
-            labels[index - 1] == labels[index + 1] != labels[index]
-            and (confidences[index] or 0) < 0.75
-        ):
+        if labels[index - 1] == labels[index + 1] != labels[index] and (confidences[index] or 0) < 0.75:
             labels[index] = labels[index - 1]
             confidences[index] = min(0.7, confidences[index] or 0.5)
 

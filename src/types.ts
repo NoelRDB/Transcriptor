@@ -19,7 +19,12 @@ export interface TranscriptSegment {
   speakerProfileId?: string;
   speakerMatchConfidence?: number;
   speakerProvisional?: boolean;
+  speakerCluster?: number;
+  speakerClusterIndex?: number;
   confidence?: number;
+  reviewState?: "pending" | "accepted" | "corrected" | "ignored";
+  speakerReviewState?: "pending" | "accepted" | "corrected" | "ignored";
+  reviewReasons?: string[];
   order: number;
   words: TranscriptWord[];
 }
@@ -184,6 +189,13 @@ export interface VoiceProfile {
   sampleCount: number;
   totalDurationMs: number;
   sourceProjectCount?: number;
+  recognizedDurationMs?: number;
+  recognizedProjectCount?: number;
+  recognizedSegmentCount?: number;
+  averageMatchConfidence?: number | null;
+  averageProfileSimilarity?: number | null;
+  averageSampleConfidence?: number | null;
+  reliabilityScore?: number | null;
   matchThreshold: number;
   enabled: boolean;
   ready: boolean;
@@ -416,6 +428,8 @@ export interface LiveSessionStarted {
   separateSpeakers: boolean;
   createdAt: string;
   speakerBackend?: string;
+  knownProfileCount?: number;
+  profileRecognitionAvailable?: boolean;
 }
 
 export interface LiveChunkResult {
@@ -447,6 +461,7 @@ export interface LiveSessionResult {
   createdAt: string;
   speakerCount: number;
   speakerBackend?: string;
+  voiceLearningWarning?: string;
   markers?: Array<{ timeMs: number; kind: string; label: string }>;
 }
 

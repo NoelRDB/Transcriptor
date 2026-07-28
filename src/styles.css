@@ -227,13 +227,24 @@ input[type="range"] { accent-color: var(--accent); height: 3px; cursor: pointer;
 .segment.excluded { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); background: color-mix(in srgb, var(--danger) 7%, var(--panel-raised)); opacity: .72; }
 .segment.excluded p { text-decoration: line-through; text-decoration-color: var(--danger); }
 .segment.uncertain:not(.active) { border-left-color: color-mix(in srgb, #f0bc64 58%, transparent); }
-.segment-meta { display: flex; align-items: center; gap: 7px; min-height: 18px; }
+.segment.uncertain.review-critical:not(.active) { border-left-color: color-mix(in srgb, #ff7772 74%, transparent); }
+.segment-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-height: 18px; }
 .segment-meta > button:first-child { padding: 0; border: 0; color: var(--accent); background: transparent; cursor: pointer; font-size: 9px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .segment-meta span { padding: 2px 5px; border-radius: 4px; color: var(--muted); background: var(--panel-raised); font-size: 8px; text-transform: uppercase; }
 .segment-meta .confidence-badge { display: inline-flex; align-items: center; gap: 3px; color: #f0bc64; text-transform: none; }
 .segment-meta .voice-profile-badge { display: inline-flex; align-items: center; gap: 3px; color: #90ddff; background: color-mix(in srgb, #90ddff 7%, var(--panel-raised)); text-transform: none; }
+.segment-meta .review-state-badge { display: inline-flex; align-items: center; gap: 3px; color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--panel-raised)); text-transform: none; }
+.segment-meta .review-accept { height: 23px; margin-left: auto; padding: 0 7px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line)); border-radius: 6px; color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); font-size: 8px; font-weight: 700; cursor: pointer; }
+.segment-meta .review-accept:hover { color: var(--accent-ink); background: var(--accent); }
+.segment-meta .review-accept + .edit-segment { margin-left: 0; }
 .edit-segment { margin-left: auto; border: 0; opacity: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .segment:hover .edit-segment, .edit-segment:focus { opacity: 1; }
+.segment-quality { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
+.segment-quality > span { padding: 3px 6px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid color-mix(in srgb, var(--line) 72%, transparent); border-radius: 5px; color: var(--muted); background: color-mix(in srgb, var(--panel-raised) 72%, transparent); font-size: 7px; font-variant-numeric: tabular-nums; }
+.segment-quality > span strong { color: color-mix(in srgb, var(--text) 80%, var(--muted)); font-weight: 700; }
+.segment-quality > span[data-tone="warning"] { border-color: color-mix(in srgb, #f0bc64 30%, var(--line)); color: #f0bc64; }
+.segment-quality > span[data-tone="critical"] { border-color: color-mix(in srgb, #ff7772 34%, var(--line)); color: #ff7772; }
+.segment-quality > span[data-tone="good"] { color: color-mix(in srgb, var(--accent) 70%, var(--muted)); }
 .segment p { margin: 7px 0 0; color: color-mix(in srgb, var(--text) 88%, var(--muted)); font-size: 12.5px; line-height: 1.65; }
 .segment.active p { color: var(--text); }
 .active-word { padding: 1px 2px; margin-inline: -2px; border-radius: 3px; color: var(--accent-ink); background: var(--accent); }
@@ -486,16 +497,20 @@ mark { color: inherit; background: color-mix(in srgb, var(--accent) 45%, transpa
 .voice-profiles-empty svg { width: 17px; }
 .voice-profiles-empty strong { color: var(--text); font-size: 9px; }
 .voice-profiles-empty p { margin: 4px 0 0; color: var(--muted); font-size: 7px; line-height: 1.45; }
-.voice-profile-list { max-height: 286px; margin-top: 10px; display: grid; gap: 7px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-.voice-profile-row { --voice-color: var(--accent); min-height: 72px; padding: 9px 9px 9px 10px; display: grid; grid-template-columns: 38px minmax(150px, 1fr) minmax(112px, .72fr) 94px; gap: 9px; align-items: center; content-visibility: auto; contain-intrinsic-size: 0 72px; border: 1px solid var(--line-soft); border-left: 3px solid var(--voice-color); border-radius: 5px 10px 10px 5px; background: var(--panel); }
+.voice-profile-list { max-height: 350px; margin-top: 10px; display: grid; gap: 7px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.voice-profile-row { --voice-color: var(--accent); min-height: 88px; padding: 9px 9px 9px 10px; display: grid; grid-template-columns: 38px minmax(185px, 1fr) minmax(124px, .72fr) 94px; gap: 9px; align-items: center; content-visibility: auto; contain-intrinsic-size: 0 88px; border: 1px solid var(--line-soft); border-left: 3px solid var(--voice-color); border-radius: 5px 10px 10px 5px; background: var(--panel); }
 .voice-profile-row.paused { opacity: .6; filter: saturate(.55); }
 .voice-avatar { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--voice-color); background: color-mix(in srgb, var(--voice-color) 10%, var(--panel-raised)); font-size: 10px; font-weight: 800; }
 .voice-profile-main { min-width: 0; }
 .voice-profile-main input { width: min(100%, 220px); padding: 3px 5px; border: 1px solid transparent; border-radius: 5px; color: var(--text); background: transparent; font-size: 10px; font-weight: 700; }
 .voice-profile-main input:hover, .voice-profile-main input:focus { border-color: var(--line); background: var(--panel-raised); outline: none; }
 .voice-profile-main span, .voice-profile-main small { display: block; margin: 3px 5px 0; overflow: hidden; color: var(--muted); font-size: 7px; white-space: nowrap; text-overflow: ellipsis; }
+.voice-profile-main .voice-profile-stat { line-height: 1.35; cursor: help; }
+.voice-profile-main .voice-profile-stat strong { color: color-mix(in srgb, var(--text) 82%, var(--muted)); font-weight: 720; }
+.voice-profile-main .voice-profile-stat.recognized strong { color: var(--accent); }
 .voice-reliability > span { display: inline-flex; padding: 3px 6px; border-radius: 5px; color: #f0c36b; background: color-mix(in srgb, #f0c36b 8%, var(--panel-raised)); font-size: 7px; font-weight: 750; }
 .voice-reliability > span[data-level="buena"], .voice-reliability > span[data-level="alta"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised)); }
+.voice-average-similarity { display: block; margin-top: 5px; color: var(--muted); font-size: 7px; cursor: help; }
 .voice-reliability label { margin-top: 5px; display: grid; grid-template-columns: 50px minmax(45px, 1fr); gap: 5px; align-items: center; color: var(--muted); font-size: 6px; }
 .voice-profile-actions { display: flex; justify-content: flex-end; gap: 5px; }
 .voice-profile-actions button { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--panel-raised); cursor: pointer; }

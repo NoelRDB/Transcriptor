@@ -55,17 +55,27 @@ const project: TranscriptionProject = {
 describe("biblioteca de voces", () => {
   it("permite aprender del proyecto actual y activa la memoria local", async () => {
     const onChange = vi.fn();
+    const latestProject = {
+      ...project,
+      segments: [{ ...project.segments[0], text: "Hola corregido", reviewState: "corrected" as const }],
+    };
+    const onBeforeLearn = vi.fn().mockResolvedValue(latestProject);
     render(<VoicesDialog
       settings={{ ...DEFAULT_SETTINGS, voiceProfilesEnabled: false }}
       project={project}
       appBusy={false}
       onChange={onChange}
+      onBeforeLearn={onBeforeLearn}
       onClose={vi.fn()}
     />);
 
     fireEvent.click(screen.getByRole("button", { name: /Aprender de este proyecto/i }));
 
-    await waitFor(() => expect(learnProjectVoices).toHaveBeenCalledWith("project-1"));
+    await waitFor(() => expect(learnProjectVoices).toHaveBeenCalledWith(latestProject));
+    expect(onBeforeLearn).toHaveBeenCalledOnce();
+    expect(onBeforeLearn.mock.invocationCallOrder[0]).toBeLessThan(
+      learnProjectVoices.mock.invocationCallOrder[0],
+    );
     expect(onChange).toHaveBeenCalledWith({
       voiceProfilesEnabled: true,
       voiceProfileAutoLearn: true,

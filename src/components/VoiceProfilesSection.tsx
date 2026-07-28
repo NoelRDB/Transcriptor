@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { ArrowRight, Check, Fingerprint, GitMerge, LoaderCircle, Pause, Play, ShieldCheck, Trash2, UsersRound, X } from "lucide-react";
 import { engine } from "../lib/engine";
+import { useAppStore } from "../store";
 import type { AppSettings, EngineEvent, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison } from "../types";
 
 interface VoiceProfilesSectionProps {
@@ -10,10 +11,23 @@ interface VoiceProfilesSectionProps {
   onChange: (settings: Partial<AppSettings>) => void;
 }
 
-function formatLearnedTime(milliseconds: number): string {
-  const seconds = Math.round(milliseconds / 1000);
-  if (seconds < 60) return `${seconds} s aprendidos`;
-  return `${Math.floor(seconds / 60)} min ${seconds % 60} s aprendidos`;
+function formatDuration(milliseconds: number): string {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours} h ${minutes} min`;
+  if (minutes) return `${minutes} min ${seconds} s`;
+  return `${seconds} s`;
+}
+
+function formatCount(value: number, singular: string, plural: string): string {
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function normalizedPercent(value?: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.round(Math.max(0, Math.min(100, value <= 1 ? value * 100 : value)));
 }
 
 function formatLastSeen(value?: string | null): string {
@@ -41,13 +55,18 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
   useEffect(() => {
     let active = true;
     engine.listVoiceProfiles()
-      .then((result) => { if (active) setCatalog(result); })
+      .then((result) => {
+        if (!active) return;
+        setCatalog(result);
+        useAppStore.getState().setVoiceProfiles(result.profiles);
+      })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (active) setLoading(false); });
     const unsubscribe = engine.subscribe((event: EngineEvent) => {
       if (!active || event.type !== "voice_profiles_updated") return;
       const updated = event.payload as VoiceProfileCatalog;
       setCatalog(updated);
+      useAppStore.getState().setVoiceProfiles(updated.profiles);
       if (updated.learnedSamples !== undefined) {
         const created = updated.createdProfiles?.length ?? 0;
         setLearningNotice(updated.learnedSamples > 0
@@ -76,6 +95,10 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
     setError("");
     try {
       const updated = await engine.updateVoiceProfile(profile.id, changes);
+      useAppStore.getState().setVoiceProfiles(
+        useAppStore.getState().voiceProfiles?.map((item) => item.id === updated.id ? updated : item)
+          ?? [updated],
+      );
       setCatalog((current) => current
         ? { ...current, profiles: current.profiles.map((item) => item.id === updated.id ? updated : item) }
         : current);
@@ -95,6 +118,9 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
     setError("");
     try {
       await engine.deleteVoiceProfile(profile.id);
+      useAppStore.getState().setVoiceProfiles(
+        useAppStore.getState().voiceProfiles?.filter((item) => item.id !== profile.id) ?? [],
+      );
       setCatalog((current) => current
         ? { ...current, profiles: current.profiles.filter((item) => item.id !== profile.id) }
         : current);
@@ -157,6 +183,7 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
     try {
       const result = await engine.mergeVoiceProfiles(mergeSource.id, mergeTarget.id);
       setCatalog(result.catalog);
+      useAppStore.getState().setVoiceProfiles(result.catalog.profiles);
       setLearningNotice(
         `Perfiles fusionados: “${result.sourceName}” ahora forma parte de “${result.targetName}”. ` +
         `${result.retainedSamples} fragmentos y ${result.updatedSegments} segmentos vinculados actualizados.`,
@@ -294,6 +321,14 @@ interface VoiceProfileRowProps {
 function VoiceProfileRow({ profile, advanced, busy, canMerge, onUpdate, onMerge, onDelete }: VoiceProfileRowProps) {
   const [name, setName] = useState(profile.name);
   const [threshold, setThreshold] = useState(Math.round(profile.matchThreshold * 100));
+  const recognizedProjects = profile.recognizedProjectCount ?? profile.sourceProjectCount ?? 0;
+  const recognizedSegments = profile.recognizedSegmentCount ?? 0;
+  const averageSimilarity = normalizedPercent(
+    profile.averageMatchConfidence
+      ?? profile.averageProfileSimilarity,
+  );
+  const memoryQuality = normalizedPercent(profile.averageSampleConfidence);
+  const reliabilityScore = normalizedPercent(profile.reliabilityScore);
 
   function saveName() {
     const trimmed = name.trim();
@@ -319,11 +354,32 @@ function VoiceProfileRow({ profile, advanced, busy, canMerge, onUpdate, onMerge,
           if (event.key === "Escape") { setName(profile.name); event.currentTarget.blur(); }
         }}
       />
-      <span>{profile.sourceProjectCount ?? 0} {(profile.sourceProjectCount ?? 0) === 1 ? "grabación" : "grabaciones"} · {profile.sampleCount} fragmentos · {formatLearnedTime(profile.totalDurationMs)}</span>
+      <span
+        className="voice-profile-stat recognized"
+        title="Tiempo total de transcripción que la aplicación ha atribuido a esta identidad; no es audio guardado."
+      >
+        <strong>Atribuida:</strong> {formatDuration(profile.recognizedDurationMs ?? 0)} · {formatCount(recognizedProjects, "conversación", "conversaciones")}
+        {recognizedSegments > 0 ? ` · ${formatCount(recognizedSegments, "segmento", "segmentos")}` : ""}
+      </span>
+      <span
+        className="voice-profile-stat memory"
+        title="Memoria local: sólo huellas matemáticas de muestras claras. Indica la evidencia usada para reconocer la voz, no todo lo que esa persona habló."
+      >
+        <strong>Memoria:</strong> {formatDuration(profile.totalDurationMs)} · {formatCount(profile.sampleCount, "muestra clara", "muestras claras")}
+      </span>
       <small>{formatLastSeen(profile.lastMatchedAt)}</small>
     </div>
     <div className="voice-reliability">
-      <span data-level={profile.reliability}>{profile.reliability === "alta" ? "Fiabilidad alta" : profile.reliability === "buena" ? "Buena fiabilidad" : "Aprendiendo"}</span>
+      <span
+        data-level={profile.reliability}
+        title="La fiabilidad combina cantidad, calidad y variedad de las huellas locales; no garantiza por sí sola cada coincidencia."
+      >
+        {reliabilityScore !== null ? `${reliabilityScore} % · ` : ""}
+        {profile.reliability === "alta" ? "Fiabilidad alta" : profile.reliability === "buena" ? "Buena fiabilidad" : "Aprendiendo"}
+      </span>
+      {averageSimilarity !== null && <small className="voice-average-similarity" title="Promedio de similitud de las coincidencias aceptadas con este perfil.">Similitud media {averageSimilarity} %</small>}
+      {averageSimilarity === null && <small className="voice-average-similarity" title="Todavía no hay coincidencias automáticas verificadas para calcular esta cifra.">Sin coincidencias verificadas</small>}
+      {advanced && memoryQuality !== null && <small className="voice-average-similarity" title="Calidad acústica media de las huellas matemáticas guardadas; no es similitud de identidad.">Calidad de memoria {memoryQuality} %</small>}
       {advanced && <label>
         <span>Umbral {threshold} %</span>
         <input

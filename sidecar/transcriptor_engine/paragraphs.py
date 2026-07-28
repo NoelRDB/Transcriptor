@@ -56,7 +56,11 @@ def group_segments(
             combined_text = _join_text(str(item.get("text", "")), combined_text)
         gap = max(0, int(segment["startMs"]) - int(previous["endMs"]))
         duration = int(segment["endMs"]) - int(current[0]["startMs"])
-        speaker_changed = (previous.get("speaker") or None) != (segment.get("speaker") or None)
+        speaker_changed = (
+            (previous.get("speaker") or None) != (segment.get("speaker") or None)
+            or (previous.get("speakerProfileId") or None)
+            != (segment.get("speakerProfileId") or None)
+        )
         previous_has_sentence_end = bool(_SENTENCE_END.search(str(previous.get("text", "")).strip()))
         natural_break = previous_has_sentence_end and (
             gap >= 750 or len(" ".join(str(item.get("text", "")) for item in current)) >= 180
@@ -84,6 +88,9 @@ def group_segments(
         confidences: list[float] = []
         speaker_confidences: list[float] = []
         speaker_match_confidences: list[float] = []
+        review_states: list[str] = []
+        speaker_review_states: list[str] = []
+        review_reasons: list[str] = []
         for item in group:
             text = _join_text(text, str(item.get("text", "")).strip())
             words.extend(item.get("words", []))
@@ -93,6 +100,31 @@ def group_segments(
                 speaker_confidences.append(float(item["speakerConfidence"]))
             if item.get("speakerMatchConfidence") is not None:
                 speaker_match_confidences.append(float(item["speakerMatchConfidence"]))
+            if item.get("reviewState"):
+                review_states.append(str(item["reviewState"]))
+            if item.get("speakerReviewState"):
+                speaker_review_states.append(str(item["speakerReviewState"]))
+            for reason in item.get("reviewReasons", []):
+                if str(reason) not in review_reasons:
+                    review_reasons.append(str(reason))
+        review_state = None
+        if "pending" in review_states:
+            review_state = "pending"
+        elif "corrected" in review_states:
+            review_state = "corrected"
+        elif review_states and len(review_states) == len(group):
+            review_state = "accepted"
+        speaker_review_state = None
+        if "pending" in speaker_review_states:
+            speaker_review_state = "pending"
+        elif "corrected" in speaker_review_states:
+            speaker_review_state = "corrected"
+        elif speaker_review_states and len(speaker_review_states) == len(group):
+            speaker_review_state = "accepted"
+        if confidences and min(confidences) < 0.84:
+            reason = "Parte del texto tiene confianza inferior al 84 %."
+            if reason not in review_reasons:
+                review_reasons.append(reason)
         result.append(
             {
                 "id": str(first["id"]),
@@ -100,19 +132,23 @@ def group_segments(
                 "endMs": max(int(first["startMs"]) + 1, int(last["endMs"])),
                 "text": text,
                 "speaker": first.get("speaker"),
-                "confidence": round(sum(confidences) / len(confidences), 4) if confidences else None,
+                "speakerCluster": first.get("speakerCluster"),
+                "confidence": round(min(confidences), 4) if confidences else None,
                 "speakerConfidence": (
-                    round(sum(speaker_confidences) / len(speaker_confidences), 4)
+                    round(min(speaker_confidences), 4)
                     if speaker_confidences
                     else None
                 ),
                 "speakerProfileId": first.get("speakerProfileId"),
                 "speakerMatchConfidence": (
-                    round(sum(speaker_match_confidences) / len(speaker_match_confidences), 4)
+                    round(min(speaker_match_confidences), 4)
                     if speaker_match_confidences
                     else None
                 ),
                 "speakerProvisional": any(bool(item.get("speakerProvisional")) for item in group),
+                "reviewState": review_state,
+                "speakerReviewState": speaker_review_state,
+                "reviewReasons": review_reasons,
                 "order": order,
                 "words": words,
             }

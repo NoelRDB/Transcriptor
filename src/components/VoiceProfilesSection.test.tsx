@@ -89,6 +89,7 @@ vi.mock("../lib/engine", () => ({
           sampleCount: 6,
           totalDurationMs: 37_000,
           sourceProjectCount: 1,
+          averageSampleConfidence: 0.99,
           matchThreshold: 0.64,
           enabled: true,
           ready: true,
@@ -104,6 +105,11 @@ vi.mock("../lib/engine", () => ({
           sampleCount: 6,
           totalDurationMs: 31_000,
           sourceProjectCount: 1,
+          recognizedDurationMs: 3_678_000,
+          recognizedProjectCount: 3,
+          recognizedSegmentCount: 184,
+          averageMatchConfidence: 0.91,
+          reliabilityScore: 0.88,
           matchThreshold: 0.64,
           enabled: true,
           ready: true,
@@ -137,7 +143,17 @@ describe("memoria local de voces", () => {
     render(<VoiceProfilesSection settings={{ ...DEFAULT_SETTINGS, voiceProfilesEnabled: false }} advanced onChange={onChange} />);
 
     await waitFor(() => expect(screen.getByDisplayValue("Noel")).toBeTruthy());
-    expect(screen.getAllByText("Buena fiabilidad")).toHaveLength(2);
+    expect(screen.getAllByText(/Buena fiabilidad/)).toHaveLength(2);
+    const recognized = screen.getAllByTitle(/Tiempo total de transcripción que la aplicación ha atribuido/)[1];
+    expect(recognized.textContent).toContain("1 h 1 min");
+    expect(recognized.textContent).toContain("3 conversaciones");
+    const memory = screen.getAllByTitle(/Memoria local: sólo huellas matemáticas/)[1];
+    expect(memory.textContent).toContain("31 s");
+    expect(memory.textContent).toContain("6 muestras claras");
+    expect(screen.getByText("Similitud media 91 %")).toBeTruthy();
+    expect(screen.getByText("Sin coincidencias verificadas")).toBeTruthy();
+    expect(screen.getByText("Calidad de memoria 99 %")).toBeTruthy();
+    expect(screen.getByText(/88 % · Buena fiabilidad/)).toBeTruthy();
     expect(screen.getByText(/DPAPI/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Activar" }));

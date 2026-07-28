@@ -43,3 +43,16 @@ def test_long_paragraph_is_bounded_without_losing_words():
     grouped = group_segments(source, max_duration_ms=10_000)
     assert len(grouped) > 1
     assert sum(len(item["words"]) for item in grouped) == len(source)
+
+
+def test_paragraph_keeps_the_lowest_confidence_visible_for_review():
+    source = [
+        segment(0, 0, 1_000, "Texto muy claro"),
+        {**segment(1, 1_100, 2_000, "pero esta parte es dudosa."), "confidence": 0.68},
+    ]
+
+    grouped = group_segments(source)
+
+    assert len(grouped) == 1
+    assert grouped[0]["confidence"] == 0.68
+    assert any("84 %" in reason for reason in grouped[0]["reviewReasons"])

@@ -105,8 +105,12 @@ class EngineClient {
   installSpeakerAi() { return this.request<{ accepted: boolean }>("install_speaker_ai"); }
   cancelSpeakerAiDownload() { return this.request<{ cancelled: boolean }>("cancel_speaker_ai_download"); }
   listVoiceProfiles() { return this.request<VoiceProfileCatalog>("list_voice_profiles"); }
-  learnProjectVoices(projectId: string) {
-    return this.request<{ accepted: boolean; projectId: string }>("learn_project_voices", { projectId }, 60_000);
+  learnProjectVoices(project: TranscriptionProject) {
+    return this.request<{ accepted: boolean; projectId: string }>(
+      "learn_project_voices",
+      { projectId: project.id, project },
+      60_000,
+    );
   }
   cancelVoiceLearning(projectId: string) {
     return this.request<{ cancelled: boolean }>("cancel_voice_learning", { projectId });

@@ -4,6 +4,7 @@ import io
 import json
 import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -161,3 +162,293 @@ def test_analysis_runs_in_background_and_keeps_protocol_responsive(monkeypatch):
     release.set()
     assert writer.completed.wait(2)
     assert database.insights is not None
+
+
+def test_voice_learning_transfers_identity_without_touching_corrected_text():
+    original = [
+        {
+            "id": "paragraph-1",
+            "startMs": 0,
+            "endMs": 4_000,
+            "text": "Texto corregido manualmente, con espacios.",
+            "words": [{"id": "w1", "text": "Texto"}, {"id": "w2", "text": "viejo"}],
+            "reviewState": "corrected",
+            "order": 0,
+        }
+    ]
+    assigned = [
+        {
+            "id": "rebuilt-unit",
+            "startMs": 0,
+            "endMs": 4_000,
+            "text": "Textoviejo",
+            "speaker": "Isabel",
+            "speakerProfileId": "voice-isabel",
+            "speakerConfidence": 0.93,
+            "speakerMatchConfidence": 0.89,
+            "speakerClusterIndex": 1,
+        }
+    ]
+
+    merged = EngineServer._merge_voice_metadata(original, assigned)
+
+    assert merged[0]["id"] == "paragraph-1"
+    assert merged[0]["text"] == "Texto corregido manualmente, con espacios."
+    assert merged[0]["words"] == original[0]["words"]
+    assert merged[0]["reviewState"] == "corrected"
+    assert merged[0]["speaker"] == "Isabel"
+    assert merged[0]["speakerProfileId"] == "voice-isabel"
+
+
+def test_live_recording_is_returned_when_voice_memory_update_fails():
+    class FailingVoiceDatabase(StubDatabase):
+        def learn_voice_observations(self, *_args, **_kwargs):
+            raise RuntimeError("memoria no disponible")
+
+    writer = CaptureWriter()
+    server = EngineServer(database=FailingVoiceDatabase(), writer=writer)
+    server.live = SimpleNamespace(
+        stop=lambda _session_id: {
+            "sessionId": "live-1",
+            "mediaPath": "C:/recordings/live.wav",
+            "segments": [{"id": "s1", "text": "GrabaciÃ³n conservada"}],
+            "_voiceObservations": [{"cluster": 1, "samples": [{"durationMs": 2_000}]}],
+            "_voiceProfileMinConfidence": 72,
+        }
+    )
+
+    server.handle(
+        {
+            "requestId": "stop-live",
+            "action": "stop_live_session",
+            "payload": {"sessionId": "live-1"},
+        }
+    )
+
+    result = next(
+        payload
+        for message_type, request_id, payload in writer.messages
+        if message_type == "result" and request_id == "stop-live"
+    )
+    assert result["mediaPath"] == "C:/recordings/live.wav"
+    assert result["segments"][0]["text"] == "GrabaciÃ³n conservada"
+    assert "voiceLearningWarning" in result
+    assert not any(message[0] == "error" for message in writer.messages)
+
+
+def test_voice_learning_receives_the_latest_project_snapshot(monkeypatch):
+    writer = CaptureWriter()
+    server = EngineServer(database=StubDatabase(), writer=writer)
+    captured = []
+    monkeypatch.setattr(
+        server,
+        "_start_voice_learning",
+        lambda request_id, project_id, snapshot=None: captured.append(
+            (request_id, project_id, snapshot)
+        ),
+    )
+    snapshot = {
+        "id": "project-latest",
+        "segments": [
+            {
+                "id": "segment-1",
+                "text": "CorrecciÃ³n que aÃºn estaba sucia",
+                "reviewState": "corrected",
+            }
+        ],
+    }
+
+    server.handle(
+        {
+            "requestId": "learn-latest",
+            "action": "learn_project_voices",
+            "payload": {
+                "projectId": "project-latest",
+                "project": snapshot,
+            },
+        }
+    )
+
+    assert captured == [("learn-latest", "project-latest", snapshot)]
+
+
+def test_transcription_emits_voice_catalog_after_persisting_new_segments(monkeypatch):
+    class CatalogDatabase(StubDatabase):
+        def __init__(self):
+            self.saved_project = None
+            self.calls = []
+
+        def load_voice_matcher_profiles(self):
+            return []
+
+        def learn_voice_observations(self, *_args, **_kwargs):
+            self.calls.append("learn")
+            return {
+                "profiles": [{"id": "voice-isabel", "recognizedDurationMs": 0}],
+                "assignments": [{
+                    "cluster": 1,
+                    "profileId": "voice-isabel",
+                    "name": "Isabel",
+                }],
+            }
+
+        def save_project(self, project):
+            self.calls.append("save")
+            self.saved_project = project
+
+        def list_voice_profiles(self):
+            self.calls.append("catalog")
+            assert self.saved_project is not None
+            recognized_ms = sum(
+                int(segment["endMs"]) - int(segment["startMs"])
+                for segment in self.saved_project["segments"]
+                if segment.get("speakerProfileId") == "voice-isabel"
+            )
+            return {
+                "profiles": [{
+                    "id": "voice-isabel",
+                    "name": "Isabel",
+                    "recognizedDurationMs": recognized_ms,
+                }],
+                "encryption": "DPAPI",
+                "storesRawAudio": False,
+            }
+
+        def record_evidence(self, *_args, **_kwargs):
+            return None
+
+        def set_queue_state(self, *_args, **_kwargs):
+            return None
+
+        def update_job(self, *_args, **_kwargs):
+            return None
+
+        def update_project_status(self, *_args, **_kwargs):
+            return None
+
+    database = CatalogDatabase()
+    writer = CaptureWriter()
+    server = EngineServer(database=database, writer=writer)
+    server.transcriber = SimpleNamespace(
+        transcribe=lambda *_args, **_kwargs: SimpleNamespace(
+            duration_ms=2_000,
+            segments=[{
+                "id": "segment-1",
+                "startMs": 0,
+                "endMs": 2_000,
+                "text": "Hola",
+                "speaker": "Hablante 1",
+                "order": 0,
+                "words": [],
+            }],
+            voice_observations=[{
+                "cluster": 1,
+                "suggestedName": "Hablante 1",
+                "samples": [],
+            }],
+            language="es",
+            model="turbo",
+            device="cpu",
+            quality_mode="professional",
+            reviewed_segments=0,
+        )
+    )
+    monkeypatch.setattr(server, "_send_queue_update", lambda: None)
+    monkeypatch.setattr(server, "_fill_queue_slots", lambda: None)
+    monkeypatch.setattr(server_module, "record_diagnostic", lambda *_args, **_kwargs: None)
+    server._jobs["project-voice"] = threading.Event()
+
+    server._run_transcription(
+        {
+            "id": "project-voice",
+            "durationMs": 2_000,
+            "segments": [],
+            "settings": {"voiceProfilesEnabled": True},
+        },
+        threading.Event(),
+    )
+
+    catalog_events = [
+        payload
+        for message_type, _request_id, payload in writer.messages
+        if message_type == "voice_profiles_updated"
+    ]
+    assert database.calls.index("save") < database.calls.index("catalog")
+    assert len(catalog_events) == 1
+    assert catalog_events[0]["profiles"][0]["recognizedDurationMs"] == 2_000
+
+
+def test_complete_diarization_reconciles_voice_memory_when_no_samples_are_found(
+    monkeypatch,
+):
+    class EmptyEvidenceDatabase(StubDatabase):
+        def __init__(self):
+            self.learning_calls = []
+
+        def load_voice_matcher_profiles(self):
+            return []
+
+        def learn_voice_observations(self, project_id, observations, **kwargs):
+            self.learning_calls.append((project_id, observations, kwargs))
+            return {"profiles": [], "assignments": []}
+
+        def list_voice_profiles(self):
+            return {"profiles": [], "encryption": "DPAPI", "storesRawAudio": False}
+
+        def record_evidence(self, *_args, **_kwargs):
+            return None
+
+        def set_queue_state(self, *_args, **_kwargs):
+            return None
+
+        def update_job(self, *_args, **_kwargs):
+            return None
+
+        def update_project_status(self, *_args, **_kwargs):
+            return None
+
+    database = EmptyEvidenceDatabase()
+    writer = CaptureWriter()
+    server = EngineServer(database=database, writer=writer)
+    server.transcriber = SimpleNamespace(
+        transcribe=lambda *_args, **_kwargs: SimpleNamespace(
+            duration_ms=2_000,
+            segments=[],
+            voice_observations=[],
+            language="es",
+            model="turbo",
+            device="cpu",
+            quality_mode="professional",
+            reviewed_segments=0,
+        )
+    )
+    monkeypatch.setattr(server, "_send_queue_update", lambda: None)
+    monkeypatch.setattr(server, "_fill_queue_slots", lambda: None)
+    monkeypatch.setattr(server_module, "record_diagnostic", lambda *_args, **_kwargs: None)
+    server._jobs["project-without-new-voices"] = threading.Event()
+
+    server._run_transcription(
+        {
+            "id": "project-without-new-voices",
+            "durationMs": 2_000,
+            "segments": [],
+            "settings": {
+                "voiceProfilesEnabled": True,
+                "voiceProfileAutoLearn": True,
+                "diarizationMode": "adaptive",
+            },
+        },
+        threading.Event(),
+    )
+
+    assert database.learning_calls == [
+        (
+            "project-without-new-voices",
+            [],
+            {
+                "min_confidence": 0.72,
+                "replace_project_evidence": True,
+            },
+        )
+    ]
+    assert any(message[0] == "voice_profiles_updated" for message in writer.messages)

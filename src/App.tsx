@@ -169,6 +169,20 @@ export default function App() {
 
   useEffect(() => engine.subscribe(routeEngineEvent), []);
 
+  useEffect(() => {
+    if (!engine.available) {
+      useAppStore.getState().setVoiceProfiles([]);
+      return;
+    }
+    let active = true;
+    engine.listVoiceProfiles()
+      .then((catalog) => {
+        if (active) useAppStore.getState().setVoiceProfiles(catalog.profiles);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
   useEffect(() => engine.subscribe((event) => {
     if (event.type === "job_completed" || event.type === "job_failed" || event.type === "job_cancelled") {
       void engine.listProjects().then(useAppStore.getState().setRecentProjects).catch(() => undefined);
@@ -513,7 +527,9 @@ export default function App() {
   async function completeLiveRecording(result: LiveSessionResult, refineAfterStop: boolean) {
     const now = new Date().toISOString();
     const project: TranscriptionProject = {
-      id: crypto.randomUUID(),
+      // The live engine learns voice evidence under the session id. Reusing it
+      // as the project id keeps profile history and the saved conversation linked.
+      id: result.sessionId,
       name: displayName(result.mediaPath),
       mediaPath: result.mediaPath,
       mediaUrl: await localMediaUrl(result.mediaPath),
@@ -544,10 +560,24 @@ export default function App() {
     };
     try {
       await engine.save(project);
+      if (project.settings.voiceProfilesEnabled) {
+        const catalog = await engine.listVoiceProfiles();
+        store.setVoiceProfiles(catalog.profiles);
+      }
       await Promise.all((result.markers ?? []).map((marker) => engine.addMarker(project.id, marker.timeMs, marker.kind, marker.label)));
       store.setProject(project);
       store.setRecentProjects(await engine.listProjects());
-      store.setProgress({ state: "completed", stage: "completed", phase: "Grabación transcrita", processedDurationMs: result.durationMs, totalDurationMs: result.durationMs, percent: 100, message: `${result.speakerCount || 1} voz${result.speakerCount === 1 ? "" : "es"} detectada${result.speakerCount === 1 ? "" : "s"}` });
+      store.setProgress({
+        state: "completed",
+        stage: "completed",
+        phase: "Grabación transcrita",
+        processedDurationMs: result.durationMs,
+        totalDurationMs: result.durationMs,
+        percent: 100,
+        message: result.voiceLearningWarning
+          ? "Grabación guardada; la memoria de voces no se actualizó esta vez"
+          : `${result.speakerCount || 1} voz${result.speakerCount === 1 ? "" : "es"} detectada${result.speakerCount === 1 ? "" : "s"}`,
+      });
       setShowLive(false);
       if (refineAfterStop) await transcribe(project, "professional");
     } catch (error) {
@@ -628,6 +658,14 @@ export default function App() {
     if (state.project && Object.keys(projectChanges).length) state.updateProjectSettings(projectChanges);
   }
 
+  async function saveBeforeVoiceLearning() {
+    const state = useAppStore.getState();
+    if (!state.project) throw new Error("No hay un proyecto abierto.");
+    await engine.save(state.project);
+    state.markSaved();
+    return state.project;
+  }
+
   return <div className={`app-shell ${store.error ? "has-error" : ""}`}>
     <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(store.project?.insights?.mode ?? "general"); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onOperations={() => store.setProject(null)} onShowProjects={() => store.setProject(null)} />
     {store.error && <div className="error-banner" role="alert"><AlertTriangle size={18} /><span>{store.error}</span><button onClick={() => store.setError(null)} aria-label="Cerrar"><X size={17} /></button></div>}
@@ -635,11 +673,11 @@ export default function App() {
       <main className={`workspace ${transcriptFocus ? "transcript-focus" : ""}`} style={transcriptFocus ? undefined : { gridTemplateColumns: `${split}% 7px 1fr` }} onPointerMove={(event) => { if (!dragging.current) return; const rect = event.currentTarget.getBoundingClientRect(); setSplit(Math.min(72, Math.max(35, ((event.clientX - rect.left) / rect.width) * 100))); }} onPointerUp={() => { dragging.current = false; }} onPointerLeave={() => { dragging.current = false; }}>
         <div className="player-pane"><div className="media-info"><span>{store.project.mediaType === "video" ? "VÍDEO" : "AUDIO"}</span><strong>{store.project.name}</strong><small>{store.project.mediaPath}</small></div><MediaPlayer key={store.project.id} project={store.project} currentTimeMs={store.currentTimeMs} skipSeconds={store.settings.skipSeconds} onTime={store.setCurrentTime} onPlaying={store.setPlaying} onError={store.setError} seekSignal={seekSignal} /></div>
         <button className="splitter" aria-label="Redimensionar paneles" onKeyDown={(event) => { if (event.key === "ArrowLeft") setSplit((value) => Math.max(35, value - 2)); if (event.key === "ArrowRight") setSplit((value) => Math.min(72, value + 2)); }} onPointerDown={(event) => { dragging.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} />
-        <TranscriptPanel key={store.project.id} segments={store.project.segments} currentTimeMs={store.currentTimeMs} followPlayback={store.project.settings.followPlayback} onFollowChange={(value) => store.updateProjectSettings({ followPlayback: value })} onSeek={seek} onEdit={editSegment} onSpeakerChange={store.editSpeaker} onReplaceAll={store.replaceAll} onSplit={store.splitSegment} onMergeNext={store.mergeWithNext} onExportMediaEdit={(excludedIds) => void exportMediaEdit(excludedIds)} onUndo={store.undo} onRedo={store.redo} onGroupParagraphs={() => void groupIntoParagraphs()} canUndo={Boolean(store.history.length)} canRedo={Boolean(store.future.length)} focusMode={transcriptFocus} onFocusMode={() => setTranscriptFocus((value) => !value)} />
+        <TranscriptPanel key={store.project.id} segments={store.project.segments} voiceProfiles={store.voiceProfiles ?? undefined} currentTimeMs={store.currentTimeMs} followPlayback={store.project.settings.followPlayback} onFollowChange={(value) => store.updateProjectSettings({ followPlayback: value })} onSeek={seek} onEdit={editSegment} onSpeakerChange={store.editSpeaker} onSpeakerReview={store.reviewSpeaker} onReplaceAll={store.replaceAll} onSplit={store.splitSegment} onMergeNext={store.mergeWithNext} onExportMediaEdit={(excludedIds) => void exportMediaEdit(excludedIds)} onUndo={store.undo} onRedo={store.redo} onGroupParagraphs={() => void groupIntoParagraphs()} canUndo={Boolean(store.history.length)} canRedo={Boolean(store.future.length)} focusMode={transcriptFocus} onFocusMode={() => setTranscriptFocus((value) => !value)} />
       </main>}
     {store.project && <StatusBar progress={store.progress} model={store.project.model} language={store.project.detectedLanguage} />}
     {showSettings && <SettingsDialog settings={store.settings} durationMs={store.project?.durationMs} onChange={changeSettings} onClose={() => setShowSettings(false)} />}
-    {showVoices && <VoicesDialog settings={store.settings} project={store.project} appBusy={["analyzing", "waiting_model", "transcribing"].includes(store.progress.state)} onChange={changeSettings} onClose={() => setShowVoices(false)} />}
+    {showVoices && <VoicesDialog settings={store.settings} project={store.project} appBusy={["analyzing", "waiting_model", "transcribing"].includes(store.progress.state)} onChange={changeSettings} onBeforeLearn={saveBeforeVoiceLearning} onClose={() => setShowVoices(false)} />}
     {showInsights && store.project && <InsightsDialog insights={store.project.insights ?? null} loading={insightsLoading} mode={insightMode} depth={insightDepth} progress={analysisProgress} analysisStartedAt={analysisStartedAt} aiStatus={localAiStatus} paragraphCount={store.project.segments.length} onModeChange={setInsightMode} onDepthChange={setInsightDepth} onAnalyze={analyzeTranscript} onCancelAnalysis={cancelAnalysis} onGroupParagraphs={groupIntoParagraphs} assistantAnswers={assistantAnswers} assistantLoading={assistantLoading} onAsk={(question) => void askTranscript(question)} onSeek={(milliseconds) => { seek(milliseconds); setShowInsights(false); }} onClose={() => setShowInsights(false)} />}
     {showLive && <LiveRecorderDialog settings={{ ...projectSettingsFromApp(store.settings), model: "turbo", qualityMode: "instant", hotwords: vocabularyPrompt("") }} audioSource={store.settings.liveAudioSource} onAudioSourceChange={(source) => store.setSettings({ liveAudioSource: source })} onLanguageChange={(language) => store.setSettings({ defaultLanguage: language })} onComplete={(result, refineAfterStop) => void completeLiveRecording(result, refineAfterStop)} onClose={() => setShowLive(false)} />}
     {showDiagnostics && <DiagnosticsDialog project={store.project} diagnostics={diagnostics} loading={diagnosticsLoading} onRun={() => void runDiagnostics()} onRelocate={() => void relocateProjectMedia()} onUseCandidate={(path) => void relocateProjectMedia(path)} onClose={() => setShowDiagnostics(false)} />}

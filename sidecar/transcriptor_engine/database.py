@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -16,13 +17,27 @@ from .paths import app_data_dir
 from .unicode_text import repair_data, sanitize_data
 from .voice_crypto import encryption_label, protect_embedding, unprotect_embedding
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
+VOICE_PROFILE_SAMPLE_LIMIT = 160
+VOICE_OBSERVATION_SAMPLE_LIMIT = 24
+NEW_PROFILE_TWO_SAMPLE_MIN_COHERENCE = 0.90
+REVIEW_STATES = {"pending", "accepted", "corrected", "ignored"}
+_VOICE_LEARNING_LOCKS_GUARD = threading.Lock()
+_VOICE_LEARNING_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _voice_learning_lock_for(path: Path) -> threading.RLock:
+    """Share profile-discovery exclusion across database instances in this process."""
+    key = os.path.normcase(str(path.resolve()))
+    with _VOICE_LEARNING_LOCKS_GUARD:
+        return _VOICE_LEARNING_LOCKS.setdefault(key, threading.RLock())
 
 
 class ProjectDatabase:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or app_data_dir() / "transcriptor.sqlite3"
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._voice_learning_lock = _voice_learning_lock_for(self.path)
         self.migrate()
 
     @contextmanager
@@ -70,6 +85,8 @@ class ProjectDatabase:
                     speaker TEXT,
                     confidence REAL,
                     speaker_confidence REAL,
+                    review_state TEXT,
+                    speaker_review_state TEXT,
                     segment_order INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS ix_segments_project_order ON segments(project_id, segment_order);
@@ -191,9 +208,12 @@ class ProjectDatabase:
                 db.execute("ALTER TABLE segments ADD COLUMN speaker_profile_id TEXT")
             if "speaker_match_confidence" not in segment_columns:
                 db.execute("ALTER TABLE segments ADD COLUMN speaker_match_confidence REAL")
+            if "review_state" not in segment_columns:
+                db.execute("ALTER TABLE segments ADD COLUMN review_state TEXT")
+            if "speaker_review_state" not in segment_columns:
+                db.execute("ALTER TABLE segments ADD COLUMN speaker_review_state TEXT")
             job_columns = {
-                str(row["name"])
-                for row in db.execute("PRAGMA table_info(transcription_jobs)").fetchall()
+                str(row["name"]) for row in db.execute("PRAGMA table_info(transcription_jobs)").fetchall()
             }
             for column, definition in (
                 ("progress_percent", "REAL"),
@@ -206,9 +226,7 @@ class ProjectDatabase:
                 ("eta_ms", "INTEGER"),
             ):
                 if column not in job_columns:
-                    db.execute(
-                        f"ALTER TABLE transcription_jobs ADD COLUMN {column} {definition}"
-                    )
+                    db.execute(f"ALTER TABLE transcription_jobs ADD COLUMN {column} {definition}")
             db.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", (SCHEMA_VERSION,))
             db.execute(
                 "UPDATE transcription_jobs SET state='failed', error_code='INTERRUPTED', "
@@ -279,9 +297,7 @@ class ProjectDatabase:
 
     def get_preference(self, key: str, default: Any = None) -> Any:
         with self.connect() as db:
-            row = db.execute(
-                "SELECT value_json FROM app_preferences WHERE key = ?", (key,)
-            ).fetchone()
+            row = db.execute("SELECT value_json FROM app_preferences WHERE key = ?", (key,)).fetchone()
         if not row:
             return default
         try:
@@ -340,11 +356,18 @@ class ProjectDatabase:
             )
             db.execute("DELETE FROM segments WHERE project_id = ?", (project["id"],))
             for order, segment in enumerate(project.get("segments", [])):
+                review_state = segment.get("reviewState")
+                if review_state not in REVIEW_STATES:
+                    review_state = None
+                speaker_review_state = segment.get("speakerReviewState")
+                if speaker_review_state not in REVIEW_STATES:
+                    speaker_review_state = None
                 db.execute(
                     """INSERT INTO segments
                     (id, project_id, start_ms, end_ms, text, speaker, confidence,
-                     speaker_confidence, speaker_profile_id, speaker_match_confidence, segment_order)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     speaker_confidence, speaker_profile_id, speaker_match_confidence,
+                     review_state, speaker_review_state, segment_order)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         segment["id"],
                         project["id"],
@@ -356,6 +379,8 @@ class ProjectDatabase:
                         segment.get("speakerConfidence"),
                         segment.get("speakerProfileId"),
                         segment.get("speakerMatchConfidence"),
+                        review_state,
+                        speaker_review_state,
                         int(segment.get("order", order)),
                     ),
                 )
@@ -399,6 +424,8 @@ class ProjectDatabase:
                         "speakerProfileId": segment["speaker_profile_id"],
                         "speakerMatchConfidence": segment["speaker_match_confidence"],
                         "speakerProvisional": False,
+                        "reviewState": segment["review_state"],
+                        "speakerReviewState": segment["speaker_review_state"],
                         "order": segment["segment_order"],
                         "words": [
                             {
@@ -416,32 +443,32 @@ class ProjectDatabase:
                 "SELECT insights_json FROM project_insights WHERE project_id = ? AND source_updated_at = ?",
                 (project_id, row["updated_at"]),
             ).fetchone()
-            return repair_data({
-                "id": row["id"],
-                "name": row["name"],
-                "mediaPath": row["media_path"],
-                "mediaHash": row["media_hash"],
-                "mediaUrl": "",
-                "mediaType": row["media_type"],
-                "durationMs": row["duration_ms"],
-                "language": row["language"],
-                "detectedLanguage": row["detected_language"],
-                "model": row["model"],
-                "createdAt": row["created_at"],
-                "updatedAt": row["updated_at"],
-                "transcriptionStatus": row["transcription_status"],
-                "lastPlaybackPositionMs": row["last_playback_position_ms"],
-                "settings": json.loads(row["settings_json"]),
-                "segments": segments,
-                "insights": json.loads(insights_row["insights_json"]) if insights_row else None,
-            })
+            return repair_data(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "mediaPath": row["media_path"],
+                    "mediaHash": row["media_hash"],
+                    "mediaUrl": "",
+                    "mediaType": row["media_type"],
+                    "durationMs": row["duration_ms"],
+                    "language": row["language"],
+                    "detectedLanguage": row["detected_language"],
+                    "model": row["model"],
+                    "createdAt": row["created_at"],
+                    "updatedAt": row["updated_at"],
+                    "transcriptionStatus": row["transcription_status"],
+                    "lastPlaybackPositionMs": row["last_playback_position_ms"],
+                    "settings": json.loads(row["settings_json"]),
+                    "segments": segments,
+                    "insights": json.loads(insights_row["insights_json"]) if insights_row else None,
+                }
+            )
 
     def delete_project(self, project_id: str) -> dict[str, Any]:
         """Delete application data for a project without touching its source media."""
         with self.connect() as db:
-            row = db.execute(
-                "SELECT name, media_path FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
+            row = db.execute("SELECT name, media_path FROM projects WHERE id = ?", (project_id,)).fetchone()
             if not row:
                 raise KeyError("El proyecto no existe o ya fue eliminado.")
             db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
@@ -456,33 +483,87 @@ class ProjectDatabase:
     def list_voice_profiles(self) -> dict[str, Any]:
         with self.connect() as db:
             rows = db.execute(
-                """SELECT id, name, color, sample_count, total_duration_ms, match_threshold,
-                    enabled, created_at, updated_at, last_matched_at,
-                    centroid_blob IS NOT NULL AS ready,
-                    (SELECT COUNT(DISTINCT source_project_id)
-                     FROM voice_profile_samples
-                     WHERE profile_id = voice_profiles.id
-                       AND source_project_id IS NOT NULL) AS source_project_count
-                FROM voice_profiles ORDER BY enabled DESC, updated_at DESC, name COLLATE NOCASE"""
+                """WITH sample_metrics AS (
+                    SELECT profile_id,
+                        COUNT(DISTINCT CASE
+                            WHEN source_project_id IS NOT NULL AND source_project_id != ''
+                            THEN source_project_id END) AS source_project_count,
+                        AVG(confidence) AS average_sample_confidence
+                    FROM voice_profile_samples
+                    GROUP BY profile_id
+                ),
+                recognition_metrics AS (
+                    SELECT s.speaker_profile_id AS profile_id,
+                        COUNT(*) AS recognized_segment_count,
+                        COALESCE(SUM(CASE WHEN s.end_ms > s.start_ms
+                            THEN s.end_ms - s.start_ms ELSE 0 END), 0) AS recognized_duration_ms,
+                        COUNT(DISTINCT s.project_id) AS recognized_project_count,
+                        AVG(CASE
+                            WHEN s.speaker_match_confidence
+                                BETWEEN matched_profile.match_threshold AND 1.0
+                            THEN s.speaker_match_confidence
+                        END) AS average_match_confidence
+                    FROM segments s
+                    JOIN voice_profiles matched_profile
+                        ON matched_profile.id = s.speaker_profile_id
+                    WHERE s.speaker_profile_id IS NOT NULL
+                    GROUP BY s.speaker_profile_id
+                )
+                SELECT vp.id, vp.name, vp.color, vp.sample_count, vp.total_duration_ms,
+                    vp.match_threshold, vp.enabled, vp.created_at, vp.updated_at,
+                    vp.last_matched_at, vp.centroid_blob IS NOT NULL AS ready,
+                    COALESCE(sm.source_project_count, 0) AS source_project_count,
+                    sm.average_sample_confidence,
+                    COALESCE(rm.recognized_segment_count, 0) AS recognized_segment_count,
+                    COALESCE(rm.recognized_duration_ms, 0) AS recognized_duration_ms,
+                    COALESCE(rm.recognized_project_count, 0) AS recognized_project_count,
+                    rm.average_match_confidence
+                FROM voice_profiles vp
+                LEFT JOIN sample_metrics sm ON sm.profile_id = vp.id
+                LEFT JOIN recognition_metrics rm ON rm.profile_id = vp.id
+                ORDER BY vp.enabled DESC, vp.updated_at DESC, vp.name COLLATE NOCASE"""
             ).fetchall()
-        profiles = [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "color": row["color"],
-                "sampleCount": row["sample_count"],
-                "totalDurationMs": row["total_duration_ms"],
-                "sourceProjectCount": row["source_project_count"],
-                "matchThreshold": row["match_threshold"],
-                "enabled": bool(row["enabled"]),
-                "ready": bool(row["ready"]),
-                "createdAt": row["created_at"],
-                "updatedAt": row["updated_at"],
-                "lastMatchedAt": row["last_matched_at"],
-                "reliability": self._voice_reliability(int(row["sample_count"])),
-            }
-            for row in rows
-        ]
+        profiles: list[dict[str, Any]] = []
+        for row in rows:
+            average_match_confidence = (
+                float(row["average_match_confidence"])
+                if row["average_match_confidence"] is not None
+                else None
+            )
+            reliability_score = self._voice_reliability_score(
+                sample_count=int(row["sample_count"]),
+                total_duration_ms=int(row["total_duration_ms"]),
+                source_project_count=int(row["source_project_count"]),
+                average_match_confidence=average_match_confidence,
+            )
+            profiles.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "color": row["color"],
+                    "sampleCount": row["sample_count"],
+                    "totalDurationMs": row["total_duration_ms"],
+                    "sourceProjectCount": row["source_project_count"],
+                    "averageSampleConfidence": (
+                        float(row["average_sample_confidence"])
+                        if row["average_sample_confidence"] is not None
+                        else None
+                    ),
+                    "recognizedSegmentCount": row["recognized_segment_count"],
+                    "recognizedDurationMs": row["recognized_duration_ms"],
+                    "recognizedProjectCount": row["recognized_project_count"],
+                    "averageMatchConfidence": average_match_confidence,
+                    "averageProfileSimilarity": average_match_confidence,
+                    "matchThreshold": row["match_threshold"],
+                    "enabled": bool(row["enabled"]),
+                    "ready": bool(row["ready"]),
+                    "createdAt": row["created_at"],
+                    "updatedAt": row["updated_at"],
+                    "lastMatchedAt": row["last_matched_at"],
+                    "reliabilityScore": reliability_score,
+                    "reliability": self._voice_reliability(reliability_score),
+                }
+            )
         return {
             "profiles": repair_data(profiles),
             "encryption": encryption_label(),
@@ -550,9 +631,7 @@ class ProjectDatabase:
 
     def delete_voice_profile(self, profile_id: str) -> dict[str, Any]:
         with self.connect() as db:
-            row = db.execute(
-                "SELECT name FROM voice_profiles WHERE id = ?", (profile_id,)
-            ).fetchone()
+            row = db.execute("SELECT name FROM voice_profiles WHERE id = ?", (profile_id,)).fetchone()
             if not row:
                 raise KeyError("El perfil de voz ya no existe.")
             db.execute(
@@ -663,6 +742,17 @@ class ProjectDatabase:
                 (target_profile_id, source_profile_id),
             )
 
+            combined_sample_count = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM voice_profile_samples WHERE profile_id = ?",
+                    (target_profile_id,),
+                ).fetchone()[0]
+            )
+            rebuilt_centroid, rebuilt_count, rebuilt_duration = (
+                self._rebuild_voice_profile_memory(db, target_profile_id)
+            )
+            removed_samples = max(0, combined_sample_count - rebuilt_count)
+
             samples = db.execute(
                 """SELECT id, source_project_id, source_segment_id, embedding_blob,
                     duration_ms, confidence, created_at
@@ -682,7 +772,7 @@ class ProjectDatabase:
                     continue
                 if project_id and segment_id:
                     seen_sources.add(source_key)
-                if len(retained) < 80:
+                if len(retained) < VOICE_PROFILE_SAMPLE_LIMIT:
                     retained.append(sample)
                 else:
                     duplicate_ids.append(str(sample["id"]))
@@ -691,7 +781,7 @@ class ProjectDatabase:
                     "DELETE FROM voice_profile_samples WHERE id = ?",
                     [(sample_id,) for sample_id in duplicate_ids],
                 )
-            removed_samples = len(duplicate_ids)
+            removed_samples += len(duplicate_ids)
 
             vectors: list[np.ndarray] = []
             weights: list[float] = []
@@ -702,7 +792,6 @@ class ProjectDatabase:
                     if vector.size != 192 or not np.isfinite(vector).all():
                         raise ValueError("Huella de voz inválida.")
                 except (OSError, ValueError):
-                    corrupt_ids.append(str(sample["id"]))
                     continue
                 vectors.append(vector)
                 duration_weight = min(max(float(sample["duration_ms"]) / 1_000.0, 0.65), 6.0)
@@ -723,24 +812,24 @@ class ProjectDatabase:
                     centroid = unprotect_embedding(bytes(target["centroid_blob"]))
                 except (OSError, ValueError):
                     centroid = None
+            if rebuilt_centroid is not None:
+                centroid = rebuilt_centroid
 
-            stats = db.execute(
-                """SELECT COUNT(*) AS count, COALESCE(SUM(duration_ms), 0) AS duration
-                FROM voice_profile_samples WHERE profile_id = ?""",
-                (target_profile_id,),
-            ).fetchone()
-            last_matched_at = max(
-                str(source["last_matched_at"] or ""),
-                str(target["last_matched_at"] or ""),
-            ) or None
+            last_matched_at = (
+                max(
+                    str(source["last_matched_at"] or ""),
+                    str(target["last_matched_at"] or ""),
+                )
+                or None
+            )
             db.execute(
                 """UPDATE voice_profiles SET centroid_blob = ?, sample_count = ?,
                     total_duration_ms = ?, updated_at = ?, last_matched_at = ?
                 WHERE id = ?""",
                 (
                     protect_embedding(centroid) if centroid is not None else None,
-                    int(stats["count"]),
-                    int(stats["duration"]),
+                    rebuilt_count,
+                    rebuilt_duration,
                     now,
                     last_matched_at,
                     target_profile_id,
@@ -778,6 +867,25 @@ class ProjectDatabase:
         project_id: str,
         observations: list[dict[str, Any]],
         min_confidence: float = 0.72,
+        *,
+        replace_project_evidence: bool = False,
+    ) -> dict[str, Any]:
+        # Jobs may transcribe in parallel, but profile discovery must observe
+        # the latest committed centroids before creating a new local identity.
+        with self._voice_learning_lock:
+            return self._learn_voice_observations_unlocked(
+                project_id,
+                observations,
+                min_confidence,
+                replace_project_evidence,
+            )
+
+    def _learn_voice_observations_unlocked(
+        self,
+        project_id: str,
+        observations: list[dict[str, Any]],
+        min_confidence: float,
+        replace_project_evidence: bool,
     ) -> dict[str, Any]:
         learned_samples = 0
         created_profiles: list[str] = []
@@ -785,20 +893,47 @@ class ProjectDatabase:
         received_samples = 0
         rejected_samples = 0
         rejected_observations = 0
+        eligible_samples = 0
+        selected_samples = 0
+        not_selected_samples = 0
+        duplicate_samples = 0
+        replaced_samples = 0
         rejection_reasons = {
             "invalidEmbedding": 0,
             "lowConfidence": 0,
             "durationOutsideRange": 0,
             "insufficientClearAudio": 0,
             "profilePaused": 0,
+            "profileNotFound": 0,
+            "weakProfileMatch": 0,
+            "weakProfileSample": 0,
+            "incoherentVoice": 0,
+            "paddedContext": 0,
         }
         now = datetime.now(UTC).isoformat()
         palette = ("#c9ff48", "#7dd3fc", "#f0abfc", "#fdba74", "#86efac", "#fda4af")
         confidence_threshold = max(0.6, min(0.92, float(min_confidence)))
+        refreshed_profile_sources: set[tuple[str, str]] = set()
+        successful_project_profiles: set[str] = set()
         with self.connect() as db:
+            # Reserve the SQLite writer before reading candidate centroids. This
+            # also serializes profile discovery with other application processes.
+            db.execute("BEGIN IMMEDIATE")
+            previous_project_profiles = (
+                {
+                    str(row["profile_id"])
+                    for row in db.execute(
+                        """SELECT DISTINCT profile_id FROM voice_profile_samples
+                        WHERE source_project_id = ?""",
+                        (project_id,),
+                    ).fetchall()
+                }
+                if project_id
+                else set()
+            )
             for observation in observations:
-                qualified: list[dict[str, Any]] = []
-                for sample in observation.get("samples", []):
+                valid_samples: list[dict[str, Any]] = []
+                for sequence, sample in enumerate(observation.get("samples", [])):
                     received_samples += 1
                     try:
                         vector = np.asarray(sample["embedding"], dtype=np.float32).reshape(-1)
@@ -812,20 +947,42 @@ class ProjectDatabase:
                         rejected_samples += 1
                         rejection_reasons["invalidEmbedding"] += 1
                         continue
+                    norm = float(np.linalg.norm(vector))
+                    if norm < 1e-8:
+                        rejected_samples += 1
+                        rejection_reasons["invalidEmbedding"] += 1
+                        continue
                     if confidence < confidence_threshold:
                         rejected_samples += 1
                         rejection_reasons["lowConfidence"] += 1
+                        continue
+                    if sample.get("learningEligible") is False:
+                        rejected_samples += 1
+                        rejection_reasons["paddedContext"] += 1
                         continue
                     if not 650 <= duration_ms <= 8_000:
                         rejected_samples += 1
                         rejection_reasons["durationOutsideRange"] += 1
                         continue
-                    qualified.append({**sample, "_vector": vector})
-                qualified.sort(
-                    key=lambda item: (float(item.get("confidence") or 0), int(item["durationMs"])),
-                    reverse=True,
+                    try:
+                        temporal_position = int(sample.get("startMs", sequence))
+                    except (TypeError, ValueError):
+                        temporal_position = sequence
+                    valid_samples.append(
+                        {
+                            **sample,
+                            "_vector": vector / norm,
+                            "_sequence": sequence,
+                            "_temporalPosition": temporal_position,
+                        }
+                    )
+                eligible_samples += len(valid_samples)
+                qualified = self._select_temporally_diverse_voice_samples(
+                    valid_samples,
+                    VOICE_OBSERVATION_SAMPLE_LIMIT,
                 )
-                qualified = qualified[:6]
+                selected_samples += len(qualified)
+                not_selected_samples += max(0, len(valid_samples) - len(qualified))
                 if not qualified or sum(int(item["durationMs"]) for item in qualified) < 1_300:
                     rejected_observations += 1
                     rejection_reasons["insufficientClearAudio"] += 1
@@ -834,16 +991,189 @@ class ProjectDatabase:
                 matched_id = str(observation.get("matchedProfileId") or "")
                 row = (
                     db.execute(
-                        """SELECT id, name, centroid_blob, sample_count, enabled
+                        """SELECT id, name, centroid_blob, sample_count, enabled, match_threshold
                         FROM voice_profiles WHERE id = ?""",
                         (matched_id,),
                     ).fetchone()
                     if matched_id
                     else None
                 )
+                if matched_id and row is None:
+                    rejected_observations += 1
+                    rejected_samples += len(qualified)
+                    rejection_reasons["profileNotFound"] += len(qualified)
+                    continue
                 if row is not None and not bool(row["enabled"]):
                     rejected_observations += 1
+                    rejected_samples += len(qualified)
                     rejection_reasons["profilePaused"] += 1
+                    continue
+
+                observation_centroid, qualified, incoherent_count, coherence = (
+                    self._robust_observation_centroid(qualified)
+                )
+                if incoherent_count:
+                    rejected_samples += incoherent_count
+                    rejection_reasons["incoherentVoice"] += incoherent_count
+                if (
+                    observation_centroid is None
+                    or not qualified
+                    or sum(int(item["durationMs"]) for item in qualified) < 1_300
+                    or (len(qualified) >= 3 and coherence < 0.42)
+                ):
+                    rejected_observations += 1
+                    rejected_samples += len(qualified)
+                    rejection_reasons["insufficientClearAudio"] += 1
+                    continue
+
+                old_centroid: np.ndarray | None = None
+                effective_match_confidence: float | None = None
+                if row is None:
+                    compatible: list[tuple[float, sqlite3.Row, np.ndarray]] = []
+                    candidate_rows = db.execute(
+                        """SELECT id, name, centroid_blob, sample_count, enabled,
+                            match_threshold
+                        FROM voice_profiles
+                        WHERE enabled = 1 AND centroid_blob IS NOT NULL"""
+                    ).fetchall()
+                    for candidate in candidate_rows:
+                        try:
+                            candidate_centroid = unprotect_embedding(
+                                bytes(candidate["centroid_blob"])
+                            )
+                            norm = float(np.linalg.norm(candidate_centroid))
+                            if (
+                                candidate_centroid.size != observation_centroid.size
+                                or not np.isfinite(candidate_centroid).all()
+                                or norm < 1e-8
+                            ):
+                                continue
+                            candidate_centroid = candidate_centroid / norm
+                        except (OSError, ValueError):
+                            continue
+                        compatible.append(
+                            (
+                                float(
+                                    np.clip(
+                                        np.dot(
+                                            observation_centroid,
+                                            candidate_centroid,
+                                        ),
+                                        -1.0,
+                                        1.0,
+                                    )
+                                ),
+                                candidate,
+                                candidate_centroid,
+                            )
+                        )
+                    compatible.sort(key=lambda item: item[0], reverse=True)
+                    if compatible:
+                        best_score, best_row, best_centroid = compatible[0]
+                        alternative = compatible[1][0] if len(compatible) > 1 else None
+                        required = min(
+                            0.90,
+                            float(best_row["match_threshold"]) + 0.015,
+                        )
+                        required = (
+                            max(required, 0.72)
+                            if len(compatible) == 1
+                            else max(required, 0.70)
+                        )
+                        margin = (
+                            best_score - alternative
+                            if alternative is not None
+                            else 1.0
+                        )
+                        if best_score >= required and margin >= 0.035:
+                            row = best_row
+                            old_centroid = best_centroid
+
+                if row is not None:
+                    if old_centroid is None:
+                        try:
+                            old_centroid = (
+                                unprotect_embedding(bytes(row["centroid_blob"]))
+                                if row["centroid_blob"] is not None
+                                else None
+                            )
+                            if old_centroid is not None:
+                                old_centroid = old_centroid / max(
+                                    float(np.linalg.norm(old_centroid)),
+                                    1e-8,
+                                )
+                        except (OSError, ValueError):
+                            old_centroid = None
+                    required_match = min(
+                        0.90,
+                        float(row["match_threshold"]) + 0.015,
+                    )
+                    if old_centroid is not None:
+                        sample_floor = max(0.52, required_match - 0.03)
+                        profile_filtered: list[dict[str, Any]] = []
+                        for sample in qualified:
+                            similarity = float(
+                                np.clip(
+                                    np.dot(sample["_vector"], old_centroid),
+                                    -1.0,
+                                    1.0,
+                                )
+                            )
+                            if similarity >= sample_floor:
+                                profile_filtered.append(sample)
+                            else:
+                                rejected_samples += 1
+                                rejection_reasons["weakProfileSample"] += 1
+                        qualified = profile_filtered
+                        (
+                            observation_centroid,
+                            qualified,
+                            profile_incoherent_count,
+                            coherence,
+                        ) = self._robust_observation_centroid(qualified)
+                        if profile_incoherent_count:
+                            rejected_samples += profile_incoherent_count
+                            rejection_reasons[
+                                "incoherentVoice"
+                            ] += profile_incoherent_count
+                    if (
+                        observation_centroid is None
+                        or not qualified
+                        or sum(int(item["durationMs"]) for item in qualified) < 1_300
+                        or (len(qualified) >= 3 and coherence < 0.42)
+                    ):
+                        rejected_observations += 1
+                        rejected_samples += len(qualified)
+                        rejection_reasons["insufficientClearAudio"] += 1
+                        continue
+                    match_evidence: list[float] = []
+                    try:
+                        reported_match = observation.get("matchConfidence")
+                        if reported_match is not None:
+                            match_evidence.append(float(reported_match))
+                    except (TypeError, ValueError):
+                        pass
+                    if old_centroid is not None:
+                        match_evidence.append(
+                            float(np.clip(np.dot(observation_centroid, old_centroid), -1.0, 1.0))
+                        )
+                    effective_match_confidence = min(match_evidence) if match_evidence else None
+                    if effective_match_confidence is None or effective_match_confidence < required_match:
+                        rejected_observations += 1
+                        rejected_samples += len(qualified)
+                        rejection_reasons["weakProfileMatch"] += len(qualified)
+                        continue
+                if (
+                    row is None
+                    and len(qualified) == 2
+                    and coherence < NEW_PROFILE_TWO_SAMPLE_MIN_COHERENCE
+                ):
+                    # With only two incompatible snippets there is no majority
+                    # voice to trust. Wait for clearer evidence instead of
+                    # creating a contaminated local identity.
+                    rejected_observations += 1
+                    rejected_samples += len(qualified)
+                    rejection_reasons["incoherentVoice"] += len(qualified)
                     continue
                 if row is None:
                     profile_id = str(uuid.uuid4())
@@ -851,9 +1181,9 @@ class ProjectDatabase:
                     if not suggested or suggested.startswith("Hablante "):
                         suggested = self._next_voice_name(db)
                     name = str(sanitize_data(suggested))[:40]
-                    color_index = int(
-                        db.execute("SELECT COUNT(*) FROM voice_profiles").fetchone()[0]
-                    ) % len(palette)
+                    color_index = int(db.execute("SELECT COUNT(*) FROM voice_profiles").fetchone()[0]) % len(
+                        palette
+                    )
                     db.execute(
                         """INSERT INTO voice_profiles
                         (id, name, color, centroid_blob, sample_count, total_duration_ms,
@@ -861,32 +1191,43 @@ class ProjectDatabase:
                         VALUES (?, ?, ?, NULL, 0, 0, 0.64, 1, ?, ?, ?)""",
                         (profile_id, name, palette[color_index], now, now, now),
                     )
-                    old_centroid = None
-                    old_count = 0
                     created_profiles.append(profile_id)
                 else:
                     profile_id = str(row["id"])
                     name = str(row["name"])
-                    old_count = int(row["sample_count"])
-                    try:
-                        old_centroid = (
-                            unprotect_embedding(bytes(row["centroid_blob"]))
-                            if row["centroid_blob"] is not None
-                            else None
+                successful_project_profiles.add(profile_id)
+
+                source_scope = (profile_id, project_id)
+                if project_id and source_scope not in refreshed_profile_sources:
+                    previous_count = int(
+                        db.execute(
+                            """SELECT COUNT(*) FROM voice_profile_samples
+                            WHERE profile_id = ? AND source_project_id = ?""",
+                            source_scope,
+                        ).fetchone()[0]
+                    )
+                    if previous_count:
+                        db.execute(
+                            """DELETE FROM voice_profile_samples
+                            WHERE profile_id = ? AND source_project_id = ?""",
+                            source_scope,
                         )
-                    except (OSError, ValueError):
-                        old_centroid = None
-
-                sample_vectors = [item["_vector"] for item in qualified]
-                new_centroid = np.stack(sample_vectors).mean(axis=0)
-                new_centroid /= max(float(np.linalg.norm(new_centroid)), 1e-8)
-                if old_centroid is not None:
-                    old_weight = min(max(old_count, 1), 24)
-                    new_weight = min(len(sample_vectors), 6)
-                    new_centroid = old_centroid * old_weight + new_centroid * new_weight
-                    new_centroid /= max(float(np.linalg.norm(new_centroid)), 1e-8)
-
+                        replaced_samples += previous_count
+                    refreshed_profile_sources.add(source_scope)
+                existing_sources = {
+                    str(item["source_segment_id"])
+                    for item in db.execute(
+                        """SELECT source_segment_id FROM voice_profile_samples
+                        WHERE profile_id = ? AND source_project_id = ?
+                          AND source_segment_id IS NOT NULL AND source_segment_id != ''""",
+                        (profile_id, project_id),
+                    ).fetchall()
+                }
                 for sample in qualified:
+                    source_segment_id = str(sample.get("segmentId") or "")
+                    if source_segment_id and source_segment_id in existing_sources:
+                        duplicate_samples += 1
+                        continue
                     db.execute(
                         """INSERT INTO voice_profile_samples
                         (id, profile_id, source_project_id, source_segment_id, embedding_blob,
@@ -896,34 +1237,28 @@ class ProjectDatabase:
                             str(uuid.uuid4()),
                             profile_id,
                             project_id,
-                            str(sample.get("segmentId") or ""),
+                            source_segment_id,
                             protect_embedding(sample["_vector"]),
                             int(sample["durationMs"]),
                             float(sample.get("confidence") or 0),
                             now,
                         ),
                     )
+                    if source_segment_id:
+                        existing_sources.add(source_segment_id)
                     learned_samples += 1
-                db.execute(
-                    """DELETE FROM voice_profile_samples WHERE id IN (
-                        SELECT id FROM voice_profile_samples WHERE profile_id = ?
-                        ORDER BY confidence DESC, created_at DESC LIMIT -1 OFFSET 80
-                    )""",
-                    (profile_id,),
+                centroid, retained_count, retained_duration = self._rebuild_voice_profile_memory(
+                    db,
+                    profile_id,
                 )
-                stats = db.execute(
-                    """SELECT COUNT(*) AS count, COALESCE(SUM(duration_ms), 0) AS duration
-                    FROM voice_profile_samples WHERE profile_id = ?""",
-                    (profile_id,),
-                ).fetchone()
                 db.execute(
                     """UPDATE voice_profiles SET centroid_blob = ?, sample_count = ?,
                         total_duration_ms = ?, updated_at = ?, last_matched_at = ?
                     WHERE id = ?""",
                     (
-                        protect_embedding(new_centroid),
-                        int(stats["count"]),
-                        int(stats["duration"]),
+                        protect_embedding(centroid) if centroid is not None else None,
+                        retained_count,
+                        retained_duration,
                         now,
                         now,
                         profile_id,
@@ -935,20 +1270,222 @@ class ProjectDatabase:
                         "profileId": profile_id,
                         "name": name,
                         "created": profile_id in created_profiles,
+                        "matchConfidence": effective_match_confidence,
                     }
                 )
+            # A successful full-project pass is authoritative for the identities
+            # it found. Remove evidence that this project previously attributed
+            # to a different profile, then rebuild every affected centroid.
+            if project_id and replace_project_evidence and rejected_observations == 0:
+                stale_profiles = previous_project_profiles - successful_project_profiles
+                for profile_id in stale_profiles:
+                    previous_count = int(
+                        db.execute(
+                            """SELECT COUNT(*) FROM voice_profile_samples
+                            WHERE profile_id = ? AND source_project_id = ?""",
+                            (profile_id, project_id),
+                        ).fetchone()[0]
+                    )
+                    if not previous_count:
+                        continue
+                    db.execute(
+                        """DELETE FROM voice_profile_samples
+                        WHERE profile_id = ? AND source_project_id = ?""",
+                        (profile_id, project_id),
+                    )
+                    replaced_samples += previous_count
+                    centroid, retained_count, retained_duration = (
+                        self._rebuild_voice_profile_memory(db, profile_id)
+                    )
+                    db.execute(
+                        """UPDATE voice_profiles SET centroid_blob = ?, sample_count = ?,
+                            total_duration_ms = ?, updated_at = ?
+                        WHERE id = ?""",
+                        (
+                            protect_embedding(centroid) if centroid is not None else None,
+                            retained_count,
+                            retained_duration,
+                            now,
+                            profile_id,
+                        ),
+                    )
         return {
             "learnedSamples": learned_samples,
             "createdProfiles": created_profiles,
             "assignments": assignments,
             "receivedObservations": len(observations),
             "receivedSamples": received_samples,
+            "eligibleSamples": eligible_samples,
+            "selectedSamples": selected_samples,
+            "notSelectedSamples": not_selected_samples,
+            "duplicateSamples": duplicate_samples,
+            "replacedSamples": replaced_samples,
             "rejectedObservations": rejected_observations,
             "rejectedSamples": rejected_samples,
             "rejectionReasons": rejection_reasons,
             "minimumConfidence": confidence_threshold,
+            "maximumSamplesPerObservation": VOICE_OBSERVATION_SAMPLE_LIMIT,
+            "maximumSamplesPerProfile": VOICE_PROFILE_SAMPLE_LIMIT,
             **self.list_voice_profiles(),
         }
+
+    @staticmethod
+    def _select_temporally_diverse_voice_samples(
+        samples: list[dict[str, Any]],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if len(samples) <= limit:
+            return sorted(
+                samples,
+                key=lambda item: (int(item["_temporalPosition"]), int(item["_sequence"])),
+            )
+        ordered = sorted(
+            samples,
+            key=lambda item: (int(item["_temporalPosition"]), int(item["_sequence"])),
+        )
+        selected: list[dict[str, Any]] = []
+        for bucket in range(limit):
+            start = bucket * len(ordered) // limit
+            end = (bucket + 1) * len(ordered) // limit
+            candidates = ordered[start:end]
+            selected.append(
+                max(
+                    candidates,
+                    key=lambda item: (
+                        float(item.get("confidence") or 0),
+                        min(int(item.get("durationMs") or 0), 6_000),
+                    ),
+                )
+            )
+        return sorted(
+            selected,
+            key=lambda item: (int(item["_temporalPosition"]), int(item["_sequence"])),
+        )
+
+    @staticmethod
+    def _robust_observation_centroid(
+        samples: list[dict[str, Any]],
+    ) -> tuple[np.ndarray | None, list[dict[str, Any]], int, float]:
+        if not samples:
+            return None, [], 0, 0.0
+        matrix = np.stack([np.asarray(item["_vector"], dtype=np.float32) for item in samples])
+        similarities = np.clip(matrix @ matrix.T, -1.0, 1.0)
+        medoid_index = int(np.argmax(np.median(similarities, axis=1)))
+        medoid_similarities = similarities[medoid_index]
+        median_similarity = float(np.median(medoid_similarities))
+        mad = float(np.median(np.abs(medoid_similarities - median_similarity)))
+        cutoff = max(0.45, median_similarity - max(0.08, 2.5 * mad))
+        keep_indices = [
+            index for index, similarity in enumerate(medoid_similarities) if float(similarity) >= cutoff
+        ]
+        if not keep_indices:
+            return None, [], len(samples), 0.0
+        kept = [samples[index] for index in keep_indices]
+        kept_matrix = matrix[keep_indices]
+        weights = np.asarray(
+            [
+                max(float(item.get("confidence") or 0), 0.01)
+                * min(max(float(item.get("durationMs") or 0) / 1_000.0, 0.65), 6.0)
+                for item in kept
+            ],
+            dtype=np.float32,
+        )
+        centroid = np.average(kept_matrix, axis=0, weights=weights)
+        centroid /= max(float(np.linalg.norm(centroid)), 1e-8)
+        coherence = float(np.median(np.clip(kept_matrix @ centroid, -1.0, 1.0)))
+        return centroid.astype(np.float32), kept, len(samples) - len(kept), coherence
+
+    @staticmethod
+    def _rebuild_voice_profile_memory(
+        db: sqlite3.Connection,
+        profile_id: str,
+    ) -> tuple[np.ndarray | None, int, int]:
+        rows = db.execute(
+            """SELECT id, source_project_id, source_segment_id, embedding_blob,
+                duration_ms, confidence, created_at
+            FROM voice_profile_samples WHERE profile_id = ?
+            ORDER BY confidence DESC, created_at DESC""",
+            (profile_id,),
+        ).fetchall()
+        valid: list[dict[str, Any]] = []
+        delete_ids: list[str] = []
+        seen_sources: set[tuple[str, str]] = set()
+        for row in rows:
+            project_id = str(row["source_project_id"] or "")
+            segment_id = str(row["source_segment_id"] or "")
+            source_key = (project_id, segment_id)
+            if project_id and segment_id and source_key in seen_sources:
+                delete_ids.append(str(row["id"]))
+                continue
+            try:
+                vector = unprotect_embedding(bytes(row["embedding_blob"]))
+                norm = float(np.linalg.norm(vector))
+                if vector.size != 192 or not np.isfinite(vector).all() or norm < 1e-8:
+                    raise ValueError("Huella de voz inválida.")
+                vector = vector / norm
+            except (OSError, ValueError):
+                # Keep inaccessible DPAPI evidence intact. A restored database
+                # or transient account-key issue must not silently destroy it.
+                continue
+            if project_id and segment_id:
+                seen_sources.add(source_key)
+            valid.append({"row": row, "vector": vector.astype(np.float32)})
+
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in valid:
+            project_key = str(item["row"]["source_project_id"] or "__sin_proyecto__")
+            groups.setdefault(project_key, []).append(item)
+        for items in groups.values():
+            items.sort(
+                key=lambda item: (
+                    float(item["row"]["confidence"]),
+                    min(int(item["row"]["duration_ms"]), 6_000),
+                    str(item["row"]["created_at"]),
+                ),
+                reverse=True,
+            )
+        retained: list[dict[str, Any]] = []
+        group_keys = sorted(groups)
+        while group_keys and len(retained) < VOICE_PROFILE_SAMPLE_LIMIT:
+            next_keys: list[str] = []
+            for key in group_keys:
+                if len(retained) >= VOICE_PROFILE_SAMPLE_LIMIT:
+                    break
+                items = groups[key]
+                if items:
+                    retained.append(items.pop(0))
+                if items:
+                    next_keys.append(key)
+            group_keys = next_keys
+        retained_ids = {str(item["row"]["id"]) for item in retained}
+        delete_ids.extend(
+            str(item["row"]["id"]) for item in valid if str(item["row"]["id"]) not in retained_ids
+        )
+        if delete_ids:
+            db.executemany(
+                "DELETE FROM voice_profile_samples WHERE id = ?",
+                [(sample_id,) for sample_id in dict.fromkeys(delete_ids)],
+            )
+        if not retained:
+            return None, 0, 0
+
+        matrix = np.stack([item["vector"] for item in retained])
+        pairwise = np.clip(matrix @ matrix.T, -1.0, 1.0)
+        medoid_index = int(np.argmax(np.median(pairwise, axis=1)))
+        medoid_similarities = pairwise[medoid_index]
+        base_weights = np.asarray(
+            [
+                max(float(item["row"]["confidence"]), 0.01)
+                * min(max(float(item["row"]["duration_ms"]) / 1_000.0, 0.65), 6.0)
+                for item in retained
+            ],
+            dtype=np.float32,
+        )
+        coherence_weights = np.square(np.clip((medoid_similarities - 0.25) / 0.75, 0.05, 1.0))
+        centroid = np.average(matrix, axis=0, weights=base_weights * coherence_weights)
+        centroid /= max(float(np.linalg.norm(centroid)), 1e-8)
+        duration_ms = sum(int(item["row"]["duration_ms"]) for item in retained)
+        return centroid.astype(np.float32), len(retained), duration_ms
 
     def _voice_profile_summary(self, profile_id: str) -> dict[str, Any]:
         catalog = self.list_voice_profiles()
@@ -958,18 +1495,45 @@ class ProjectDatabase:
         return profile
 
     @staticmethod
-    def _voice_reliability(sample_count: int) -> str:
-        if sample_count >= 18:
+    def _voice_reliability_score(
+        *,
+        sample_count: int,
+        total_duration_ms: int,
+        source_project_count: int,
+        average_match_confidence: float | None,
+    ) -> int:
+        sample_score = min(max(sample_count, 0) / 24.0, 1.0)
+        duration_score = min(max(total_duration_ms, 0) / 90_000.0, 1.0)
+        project_score = min(max(source_project_count, 0) / 3.0, 1.0)
+        similarity_score = (
+            0.0
+            if average_match_confidence is None
+            else float(np.clip((average_match_confidence - 0.5) / 0.4, 0.0, 1.0))
+        )
+        return int(
+            round(
+                100
+                * (
+                    sample_score * 0.30
+                    + duration_score * 0.25
+                    + project_score * 0.20
+                    + similarity_score * 0.25
+                )
+            )
+        )
+
+    @staticmethod
+    def _voice_reliability(reliability_score: int) -> str:
+        if reliability_score >= 78:
             return "alta"
-        if sample_count >= 6:
+        if reliability_score >= 48:
             return "buena"
         return "aprendiendo"
 
     @staticmethod
     def _next_voice_name(db: sqlite3.Connection) -> str:
         existing = {
-            str(row["name"]).casefold()
-            for row in db.execute("SELECT name FROM voice_profiles").fetchall()
+            str(row["name"]).casefold() for row in db.execute("SELECT name FROM voice_profiles").fetchall()
         }
         index = 1
         while f"hablante {index}" in existing:
@@ -1262,9 +1826,7 @@ class ProjectDatabase:
     def enqueue_project(self, project: dict[str, Any]) -> dict[str, Any]:
         self.save_project(project)
         with self.connect() as db:
-            position = int(
-                db.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM job_queue").fetchone()[0]
-            )
+            position = int(db.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM job_queue").fetchone()[0])
             queue_id = str(uuid.uuid4())
             db.execute(
                 """INSERT INTO job_queue (id, project_id, position, state, settings_json)

@@ -1,12 +1,16 @@
 import { engine } from "./engine";
 import { shouldRouteEngineEvent } from "./jobs";
 import { useAppStore } from "../store";
-import type { EngineEvent, JobProgress, TranscriptSegment, VoiceProfileMergeResult } from "../types";
+import type { EngineEvent, JobProgress, TranscriptSegment, VoiceProfileCatalog, VoiceProfileMergeResult } from "../types";
 
 export function routeEngineEvent(event: EngineEvent): void {
   const state = useAppStore.getState();
   const payload = event.payload as Record<string, any>;
   if (!shouldRouteEngineEvent(event.type, event.payload, state.project?.id)) return;
+  if (event.type === "voice_profiles_updated") {
+    state.setVoiceProfiles((event.payload as VoiceProfileCatalog).profiles ?? []);
+    return;
+  }
   if (event.type === "voice_profiles_merged") {
     const merged = event.payload as VoiceProfileMergeResult;
     const project = state.project;

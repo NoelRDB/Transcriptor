@@ -42,7 +42,14 @@ class SpeakerClusterer:
         self.max_speakers = max(1, min(8, max_speakers))
         self.neural = OnlineSpeakerIdentifier(sensitivity, max_speakers, voice_profiles)
         self.last_confidence: float | None = None
-        self.backend = "CAM++ · ONNX" if self.neural.embedder else "Espectral compatible"
+        self.last_cluster_index: int | None = None
+        self.last_cluster_backend: str | None = None
+        self.last_identity_changed = False
+        self.backend = (
+            "CAM++ · perfiles locales"
+            if self.neural.embedder
+            else "Espectral · sin reconocimiento de perfiles"
+        )
 
     @property
     def speaker_count(self) -> int:
@@ -52,14 +59,23 @@ class SpeakerClusterer:
         neural_speaker, confidence = self.neural.assign(audio)
         if neural_speaker:
             self.last_confidence = confidence
+            self.last_cluster_index = getattr(self.neural, "last_cluster_index", None)
+            self.last_cluster_backend = "neural"
+            self.last_identity_changed = bool(
+                getattr(self.neural, "last_identity_changed", False)
+            )
             return neural_speaker
         self.last_confidence = None
+        self.last_cluster_backend = "spectral"
+        self.last_identity_changed = False
         embedding = self._embedding(audio)
         if embedding is None:
+            self.last_cluster_index = 0 if not self.centroids else len(self.centroids) - 1
             return "Hablante 1" if not self.centroids else f"Hablante {len(self.centroids)}"
         if not self.centroids:
             self.centroids.append(embedding)
             self.counts.append(1)
+            self.last_cluster_index = 0
             return "Hablante 1"
 
         distances = [1.0 - float(np.dot(embedding, centroid)) for centroid in self.centroids]
@@ -73,11 +89,13 @@ class SpeakerClusterer:
         ):
             self.centroids.append(embedding)
             self.counts.append(1)
+            self.last_cluster_index = len(self.centroids) - 1
             return f"Hablante {len(self.centroids)}"
         self.counts[nearest] += 1
         weight = min(0.22, 1.0 / self.counts[nearest])
         centroid = self.centroids[nearest] * (1.0 - weight) + embedding * weight
         self.centroids[nearest] = centroid / max(float(np.linalg.norm(centroid)), 1e-8)
+        self.last_cluster_index = nearest
         return f"Hablante {nearest + 1}"
 
     @staticmethod
@@ -123,6 +141,7 @@ class LiveSession:
     language: str | None = None
     model_error: str | None = None
     voice_observations: list[dict[str, Any]] = field(default_factory=list)
+    voice_observation_buckets: dict[int, set[int]] = field(default_factory=dict)
     clusterer: SpeakerClusterer = field(default_factory=SpeakerClusterer)
 
 
@@ -177,6 +196,8 @@ class LiveSessionManager:
             "separateSpeakers": separate_speakers,
             "createdAt": session.created_at,
             "speakerBackend": session.clusterer.backend,
+            "knownProfileCount": len(settings.get("_voiceProfiles") or []),
+            "profileRecognitionAvailable": bool(session.clusterer.neural.embedder),
         }
 
     def push(self, session_id: str, encoded_pcm: str, emit: LiveEmit) -> dict[str, Any]:
@@ -233,8 +254,25 @@ class LiveSessionManager:
                 continue
             local_start = max(0, round(float(segment.start) * SAMPLE_RATE))
             local_end = min(pcm.size, round(float(segment.end) * SAMPLE_RATE))
+            voice_start = max(0, local_start - round(SAMPLE_RATE * 0.18))
+            voice_end = min(pcm.size, local_end + round(SAMPLE_RATE * 0.18))
+            minimum_voice_window = round(SAMPLE_RATE * 0.75)
+            voice_window_padded = voice_end - voice_start < minimum_voice_window
+            if voice_window_padded:
+                missing = minimum_voice_window - (voice_end - voice_start)
+                voice_start = max(0, voice_start - missing // 2)
+                voice_end = min(
+                    pcm.size,
+                    voice_end + (minimum_voice_window - (voice_end - voice_start)),
+                )
+                voice_start = max(0, voice_end - minimum_voice_window)
             item["speaker"] = (
-                session.clusterer.assign(pcm[local_start:local_end])
+                session.clusterer.assign(pcm[voice_start:voice_end])
+                if session.separate_speakers
+                else None
+            )
+            cluster_index = (
+                session.clusterer.last_cluster_index
                 if session.separate_speakers
                 else None
             )
@@ -249,25 +287,87 @@ class LiveSessionManager:
                 if session.separate_speakers
                 else None
             )
-            item["speakerProvisional"] = bool(session.separate_speakers)
+            item["speakerCluster"] = (
+                cluster_index + 1 if cluster_index is not None else None
+            )
+            item["speakerClusterBackend"] = (
+                getattr(session.clusterer, "last_cluster_backend", "neural")
+                if session.separate_speakers
+                else None
+            )
+            item["speakerProvisional"] = bool(
+                session.separate_speakers and not item.get("speakerProfileId")
+            )
+            if (
+                session.separate_speakers
+                and cluster_index is not None
+                and getattr(session.clusterer, "last_cluster_backend", "neural")
+                == "neural"
+                and session.clusterer.last_identity_changed
+                and item.get("speakerProfileId")
+                and getattr(
+                    session.clusterer.neural,
+                    "last_identity_previous_profile_id",
+                    None,
+                )
+                is None
+            ):
+                for previous in reversed(session.segments):
+                    if previous.get("speakerCluster") != cluster_index + 1:
+                        continue
+                    if previous.get("speakerClusterBackend") != "neural":
+                        continue
+                    if not previous.get("speakerProvisional"):
+                        break
+                    previous["speaker"] = item["speaker"]
+                    previous["speakerProfileId"] = item.get("speakerProfileId")
+                    previous["speakerMatchConfidence"] = item.get(
+                        "speakerMatchConfidence"
+                    )
+                    previous["speakerProvisional"] = not bool(
+                        item.get("speakerProfileId")
+                    )
+                    emit(
+                        "live_partial",
+                        {
+                            "segment": dict(previous),
+                            "durationMs": duration_ms,
+                            "language": session.language,
+                            "device": (self.device or "cpu").upper(),
+                            "speakerBackend": session.clusterer.backend,
+                            "identityUpdate": True,
+                            "message": (
+                                f"Voz reconocida como {item['speaker']}"
+                                if item.get("speakerProfileId")
+                                else "Identidad de voz actualizada"
+                            ),
+                        },
+                    )
             embedding = session.clusterer.neural.last_embedding
             if (
                 embedding is not None
                 and bool(session.settings.get("voiceProfilesEnabled", False))
                 and bool(session.settings.get("voiceProfileAutoLearn", True))
                 and (session.clusterer.last_confidence or 0) >= 0.6
+                and getattr(session.clusterer, "last_cluster_backend", "neural")
+                == "neural"
+                and not voice_window_padded
             ):
-                session.voice_observations.append(
+                self._retain_voice_observation(
+                    session,
                     {
                         "speaker": item.get("speaker") or "Hablante 1",
+                        "cluster": (cluster_index + 1) if cluster_index is not None else 1,
                         "matchedProfileId": item.get("speakerProfileId"),
+                        "matchConfidence": item.get("speakerMatchConfidence"),
                         "embedding": embedding.tolist(),
                         "segmentId": item["id"],
                         "startMs": item["startMs"],
                         "endMs": item["endMs"],
                         "durationMs": item["endMs"] - item["startMs"],
                         "confidence": session.clusterer.last_confidence,
-                    }
+                        "learningEligible": True,
+                    },
                 )
             session.segments.append(item)
             produced.append(item)
@@ -298,17 +398,45 @@ class LiveSessionManager:
         segments = group_segments(session.segments, max_duration_ms=35_000, max_characters=520)
         self.sessions.pop(session_id, None)
         observations: list[dict[str, Any]] = []
-        grouped: dict[str, list[dict[str, Any]]] = {}
+        grouped: dict[int, list[dict[str, Any]]] = {}
         for sample in session.voice_observations:
-            key = str(sample.get("matchedProfileId") or sample.get("speaker") or "Hablante 1")
+            key = int(sample.get("cluster") or 1)
             grouped.setdefault(key, []).append(sample)
-        for index, samples in enumerate(grouped.values(), 1):
+        for cluster, samples in sorted(grouped.items()):
+            matched_profile_id, match_confidence = self._stable_cluster_identity(
+                session,
+                cluster,
+                samples,
+            )
+            matched_samples = [
+                sample
+                for sample in samples
+                if sample.get("matchedProfileId") == matched_profile_id
+            ]
+            representative = max(
+                matched_samples,
+                key=self._voice_sample_quality,
+                default=samples[-1],
+            )
+            known_profile = next(
+                (
+                    profile
+                    for profile in session.settings.get("_voiceProfiles", [])
+                    if str(profile.get("id") or "") == matched_profile_id
+                ),
+                None,
+            )
             observations.append(
                 {
-                    "cluster": index,
-                    "suggestedName": str(samples[0].get("speaker") or f"Hablante {index}"),
-                    "matchedProfileId": samples[0].get("matchedProfileId"),
-                    "samples": samples,
+                    "cluster": cluster,
+                    "suggestedName": str(
+                        (known_profile or {}).get("name")
+                        or representative.get("speaker")
+                        or f"Hablante {cluster}"
+                    ),
+                    "matchedProfileId": matched_profile_id,
+                    "matchConfidence": match_confidence,
+                    "samples": matched_samples if matched_profile_id else samples,
                 }
             )
         return {
@@ -326,6 +454,128 @@ class LiveSessionManager:
                 session.settings.get("voiceProfileMinConfidence", 72)
             ),
         }
+
+    @staticmethod
+    def _retain_voice_observation(
+        session: LiveSession, observation: dict[str, Any]
+    ) -> None:
+        """Keep bounded, time-diverse evidence during recordings of several hours."""
+        cluster = int(observation.get("cluster") or 1)
+        bucket = int(observation.get("startMs") or 0) // 15_000
+
+        same_bucket = [
+            (index, sample)
+            for index, sample in enumerate(session.voice_observations)
+            if int(sample.get("cluster") or 1) == cluster
+            and int(sample.get("startMs") or 0) // 15_000 == bucket
+        ]
+        if same_bucket:
+            weakest_index, weakest = min(
+                same_bucket,
+                key=lambda item: LiveSessionManager._voice_sample_quality(item[1]),
+            )
+            if (
+                LiveSessionManager._voice_sample_quality(observation)
+                > LiveSessionManager._voice_sample_quality(weakest)
+            ):
+                session.voice_observations[weakest_index] = observation
+            return
+
+        seen_by_cluster = getattr(session, "voice_observation_buckets", None)
+        if seen_by_cluster is None:
+            seen_by_cluster = {}
+            session.voice_observation_buckets = seen_by_cluster
+        seen_buckets = seen_by_cluster.setdefault(cluster, set())
+        if bucket in seen_buckets:
+            return
+        seen_buckets.add(bucket)
+
+        same_cluster = [
+            (index, sample)
+            for index, sample in enumerate(session.voice_observations)
+            if int(sample.get("cluster") or 1) == cluster
+        ]
+        if len(same_cluster) >= 48:
+            candidates = [sample for _index, sample in same_cluster]
+            candidates.append(observation)
+            positions = np.asarray(
+                [int(sample.get("startMs") or 0) for sample in candidates],
+                dtype=np.float64,
+            )
+            targets = np.linspace(float(positions.min()), float(positions.max()), 48)
+            remaining = set(range(len(candidates)))
+            retained: list[dict[str, Any]] = []
+            for target in targets:
+                selected = min(
+                    remaining,
+                    key=lambda index: (
+                        abs(float(positions[index]) - float(target)),
+                        -LiveSessionManager._voice_sample_quality(candidates[index]),
+                    ),
+                )
+                remaining.remove(selected)
+                retained.append(candidates[selected])
+            retained.sort(key=lambda sample: int(sample.get("startMs") or 0))
+            for (target_index, _old), sample in zip(
+                same_cluster,
+                retained,
+                strict=True,
+            ):
+                session.voice_observations[target_index] = sample
+            return
+        session.voice_observations.append(observation)
+
+    @staticmethod
+    def _voice_sample_quality(sample: dict[str, Any]) -> float:
+        cluster_score = float(sample.get("confidence") or 0)
+        identity_score = float(sample.get("matchConfidence") or cluster_score)
+        duration_score = min(1.0, float(sample.get("durationMs") or 0) / 4_000)
+        return identity_score * 0.62 + cluster_score * 0.28 + duration_score * 0.10
+
+    @staticmethod
+    def _stable_cluster_identity(
+        session: LiveSession,
+        cluster: int,
+        samples: list[dict[str, Any]],
+    ) -> tuple[str | None, float | None]:
+        weights: dict[str, float] = {}
+        durations: dict[str, int] = {}
+        weighted_scores: dict[str, float] = {}
+        for sample in samples:
+            profile_id = str(sample.get("matchedProfileId") or "")
+            if not profile_id:
+                continue
+            confidence = max(0.0, float(sample.get("confidence") or 0))
+            match = max(0.0, float(sample.get("matchConfidence") or 0))
+            duration = max(0, int(sample.get("durationMs") or 0))
+            weight = min(duration, 8_000) * max(confidence, 0.01) * max(match, 0.01)
+            weights[profile_id] = weights.get(profile_id, 0.0) + weight
+            durations[profile_id] = durations.get(profile_id, 0) + duration
+            weighted_scores[profile_id] = weighted_scores.get(profile_id, 0.0) + match * weight
+        if not weights:
+            return None, None
+
+        final_profile_id = None
+        neural_index = cluster - 1
+        cluster_profile_ids = getattr(
+            session.clusterer.neural,
+            "cluster_profile_ids",
+            [],
+        )
+        if 0 <= neural_index < len(cluster_profile_ids):
+            final_profile_id = cluster_profile_ids[neural_index]
+        winner = max(weights, key=weights.get)
+        total_weight = sum(weights.values())
+        if (
+            final_profile_id in weights
+            and weights[str(final_profile_id)] >= weights[winner] * 0.82
+        ):
+            winner = str(final_profile_id)
+        support_ratio = weights[winner] / max(total_weight, 1e-8)
+        if durations[winner] < 1_300 or support_ratio < 0.62:
+            return None, None
+        average = weighted_scores[winner] / max(weights[winner], 1e-8)
+        return winner, max(0.0, min(1.0, average))
 
     def cancel(self, session_id: str) -> None:
         session = self._session(session_id)

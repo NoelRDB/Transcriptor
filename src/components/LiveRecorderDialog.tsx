@@ -25,7 +25,7 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
   const [state, setState] = useState<RecorderState>("ready");
   const [engineStage, setEngineStage] = useState<EngineStage>("idle");
   const [separateSpeakers, setSeparateSpeakers] = useState(true);
-  const [refineAfterStop, setRefineAfterStop] = useState(false);
+  const [refineAfterStop, setRefineAfterStop] = useState(settings.experienceMode === "simple");
   const [selectedLanguage, setSelectedLanguage] = useState(settings.language && settings.language !== "auto" ? settings.language : "es");
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [durationMs, setDurationMs] = useState(0);
@@ -36,6 +36,8 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
   const [language, setLanguage] = useState("Detectando");
   const [speakerCount, setSpeakerCount] = useState(0);
   const [speakerBackend, setSpeakerBackend] = useState("Preparando");
+  const [knownProfileCount, setKnownProfileCount] = useState(0);
+  const [profileRecognitionAvailable, setProfileRecognitionAvailable] = useState(true);
   const [speakerSensitivity, setSpeakerSensitivity] = useState(settings.speakerSensitivity);
   const [speakerCountMode, setSpeakerCountMode] = useState(settings.speakerCountMode);
   const [speakerLimit, setSpeakerLimit] = useState(settings.speakerCount);
@@ -58,7 +60,7 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
         if (payload.language) setLanguage(payload.language.toUpperCase());
         if (payload.device) setDevice(payload.device);
         if (payload.speakerBackend) setSpeakerBackend(payload.speakerBackend);
-        setStatus("Texto actualizado · seguimos escuchando");
+        setStatus(payload.message || "Texto actualizado · seguimos escuchando");
         return;
       }
       if (payload.stage) setEngineStage(payload.stage);
@@ -89,6 +91,8 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
     setPendingBlocks(0);
     setLastLatencyMs(null);
     setSpeakerCount(0);
+    setKnownProfileCount(0);
+    setProfileRecognitionAvailable(true);
     setMarkers([]);
     setLanguage(selectedLanguage === "auto" ? "Detectando" : selectedLanguage.toUpperCase());
     setStatus("Preparando el micrófono y el modelo Turbo…");
@@ -97,6 +101,9 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
       const session = await engine.startLiveSession({ ...settings, language: selectedLanguage, speakerSensitivity, speakerCountMode, speakerCount: speakerLimit, liveLatency }, separateSpeakers);
       sessionIdRef.current = session.sessionId;
       if (session.speakerBackend) setSpeakerBackend(session.speakerBackend);
+      const voiceSession = session as typeof session & { knownProfileCount?: number; profileRecognitionAvailable?: boolean };
+      setKnownProfileCount(voiceSession.knownProfileCount ?? 0);
+      setProfileRecognitionAvailable(voiceSession.profileRecognitionAvailable ?? true);
       const capture = new LiveAudioCapture(enqueueChunk, setLevel, liveLatency);
       captureRef.current = capture;
       await capture.start(audioSource);
@@ -195,7 +202,7 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
             <div><dt><Languages size={14} /> Idioma</dt><dd>{language}</dd></div>
             <div><dt><Gauge size={14} /> Latencia</dt><dd>{lastLatencyMs === null ? "—" : lastLatencyMs < 1000 ? `${lastLatencyMs} ms` : `${(lastLatencyMs / 1000).toFixed(1)} s`}</dd></div>
             <div><dt><TimerReset size={14} /> Cola</dt><dd className={pendingBlocks > 1 ? "metric-warning" : ""}>{pendingBlocks ? `${pendingBlocks} bloque${pendingBlocks === 1 ? "" : "s"}` : "Al día"}</dd></div>
-            <div><dt><Users size={14} /> Voces IA</dt><dd>{separateSpeakers ? speakerBackend : "Desactivada"}</dd></div>
+            <div><dt><Users size={14} /> Voces IA</dt><dd>{separateSpeakers ? `${speakerBackend}${knownProfileCount ? ` · ${knownProfileCount} perfiles` : ""}` : "Desactivada"}</dd></div>
             <div><dt><Radio size={14} /> Respuesta</dt><dd>{liveLatency === "ultra" ? "Ultrabaja" : liveLatency === "stable" ? "Estable" : "Equilibrada"}</dd></div>
           </dl>
 
@@ -231,6 +238,12 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
             <span><strong>Separar hablantes con IA</strong><small>Compara timbre, prosodia y huellas neuronales; el número puede decidirse automáticamente.</small></span>
             {separateSpeakers && <CheckCircle2 size={17} />}
           </label>
+          {separateSpeakers && settings.voiceProfilesEnabled && !profileRecognitionAvailable && (
+            <div className="live-simple-voice">
+              <CircleHelp size={15} />
+              <span><strong>Perfiles temporalmente no disponibles</strong><small>La separación sigue activa, pero instala o repara CAM++ en Voces para reconocer nombres conocidos.</small></span>
+            </div>
+          )}
 
           {settings.experienceMode === "simple" ? <div className="live-simple-voice"><Sparkles size={15} /><span><strong>Piloto automático activo</strong><small>Número de voces automático · sensibilidad adaptativa · retardo ajustado al equipo</small></span></div> :
             <div className="live-advanced-voice">
@@ -267,7 +280,7 @@ export function LiveRecorderDialog({ settings, audioSource, onAudioSourceChange,
             <strong>{segments.length ? `${segments.length} intervención${segments.length === 1 ? "" : "es"}` : "Esperando voz"}{speakerCount > 1 ? ` · ${speakerCount} hablantes` : ""}</strong>
           </header>
           <div className="live-segments">
-            {visibleSegments.length ? visibleSegments.map((segment) => <article key={segment.id}><div><span className={speakerClassName(segment.speaker)}>{segment.speaker ?? "Hablante sin identificar"}{segment.speakerProvisional ? " · provisional" : ""}</span><time>{segment.speakerConfidence != null ? `${Math.round(segment.speakerConfidence * 100)} % voz · ` : ""}{formatClock(segment.startMs)}</time></div><p>{segment.text}</p></article>) : <div className="live-empty"><span><AudioLines size={28} /></span><strong>Tu conversación aparecerá aquí</strong><p>El primer texto puede tardar un poco mientras Turbo se prepara. Después se actualizará al terminar cada frase.</p></div>}
+            {visibleSegments.length ? visibleSegments.map((segment) => <article key={segment.id}><div><span className={speakerClassName(segment.speaker)}>{segment.speaker ?? "Hablante sin identificar"}{segment.speakerProfileId ? " · reconocida" : segment.speakerProvisional ? " · provisional" : ""}</span><time>{segment.speakerMatchConfidence != null ? `${Math.round(segment.speakerMatchConfidence * 100)} % identidad · ` : segment.speakerConfidence != null ? `${Math.round(segment.speakerConfidence * 100)} % separación · ` : ""}{formatClock(segment.startMs)}</time></div><p>{segment.text}</p></article>) : <div className="live-empty"><span><AudioLines size={28} /></span><strong>Tu conversación aparecerá aquí</strong><p>El primer texto puede tardar un poco mientras Turbo se prepara. Después se actualizará al terminar cada frase.</p></div>}
             {hearingSpeech && <div className="live-draft"><AudioLines size={16} /><span><strong>Escuchando la frase actual…</strong><small>Se mostrará cuando la IA confirme las palabras.</small></span></div>}
             <div ref={transcriptEndRef} />
           </div>

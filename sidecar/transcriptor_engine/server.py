@@ -120,7 +120,17 @@ class EngineServer:
             elif action == "list_voice_profiles":
                 self.writer.result(request_id, self.database.list_voice_profiles())
             elif action == "learn_project_voices":
-                self._start_voice_learning(request_id, str(payload["projectId"]))
+                project_snapshot = payload.get("project")
+                if project_snapshot is not None and not isinstance(
+                    project_snapshot,
+                    dict,
+                ):
+                    raise ValueError("La versiÃ³n del proyecto no es vÃ¡lida.")
+                self._start_voice_learning(
+                    request_id,
+                    str(payload["projectId"]),
+                    project_snapshot,
+                )
             elif action == "cancel_voice_learning":
                 self._cancel_voice_learning(request_id, str(payload["projectId"]))
             elif action == "update_voice_profile":
@@ -308,11 +318,29 @@ class EngineServer:
                     result.pop("_voiceProfileMinConfidence", 72)
                 ) / 100
                 if observations:
-                    learned = self.database.learn_voice_observations(
-                        session_id, observations, min_confidence=minimum_confidence
-                    )
-                    self._apply_voice_assignments(result["segments"], observations, learned)
-                    self.writer.send("voice_profiles_updated", learned)
+                    try:
+                        learned = self.database.learn_voice_observations(
+                            session_id, observations, min_confidence=minimum_confidence
+                        )
+                        self._apply_voice_assignments(
+                            result["segments"], observations, learned
+                        )
+                        self.writer.send("voice_profiles_updated", learned)
+                    except Exception as error:
+                        # The WAV and live transcript are already complete. A
+                        # profile-memory failure must never make that work look lost.
+                        result["voiceLearningWarning"] = self._safe_error(error)
+                        self.writer.send(
+                            "live_status",
+                            {
+                                "sessionId": session_id,
+                                "stage": "ready",
+                                "message": (
+                                    "Grabación guardada. La memoria de voces no pudo "
+                                    "actualizarse esta vez."
+                                ),
+                            },
+                        )
                 self.writer.result(request_id, result)
             elif action == "cancel_live_session":
                 self.live.cancel(str(payload["sessionId"]))
@@ -355,8 +383,21 @@ class EngineServer:
         except Exception as error:
             self.writer.error(request_id, self._safe_error(error))
 
-    def _start_voice_learning(self, request_id: str, project_id: str) -> None:
-        project = self.database.load_project(project_id)
+    def _start_voice_learning(
+        self,
+        request_id: str,
+        project_id: str,
+        project_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        if project_snapshot is not None:
+            if str(project_snapshot.get("id") or "") != project_id:
+                raise ValueError("La versiÃ³n del proyecto no coincide.")
+            project = dict(project_snapshot)
+            # The snapshot is authoritative for this operation. It includes
+            # edits made seconds ago even if an older autosave was still queued.
+            self.database.save_project(project)
+        else:
+            project = self.database.load_project(project_id)
         media_path = Path(str(project.get("mediaPath") or ""))
         if not media_path.is_file():
             raise FileNotFoundError(
@@ -482,7 +523,7 @@ class EngineServer:
                     eta_ms=eta_ms,
                 )
 
-            _, speaker_count = neural_assign_speakers(
+            assigned_segments, speaker_count = neural_assign_speakers(
                 list(project.get("segments", [])),
                 audio,
                 speaker_count=8,
@@ -507,6 +548,16 @@ class EngineServer:
                 project_id,
                 observations,
                 min_confidence=float(settings.get("voiceProfileMinConfidence", 72)) / 100,
+                replace_project_evidence=True,
+            )
+            self._apply_voice_assignments(
+                assigned_segments,
+                observations,
+                learned,
+            )
+            project["segments"] = self._merge_voice_metadata(
+                list(project.get("segments", [])),
+                assigned_segments,
             )
             project["settings"] = {
                 **settings,
@@ -526,6 +577,14 @@ class EngineServer:
                 },
             )
             self.writer.send("voice_profiles_updated", learned)
+            self.writer.send(
+                "partial_segments",
+                {
+                    "projectId": project_id,
+                    "segments": project["segments"],
+                    "replaceExisting": True,
+                },
+            )
             self.writer.send(
                 "voice_learning_completed",
                 {
@@ -890,6 +949,12 @@ class EngineServer:
                     )
 
             settings = project.get("settings", {})
+            voice_evidence_authoritative = (
+                bool(settings.get("voiceProfilesEnabled", False))
+                and bool(settings.get("voiceProfileAutoLearn", True))
+                and str(settings.get("diarizationMode", "off"))
+                in {"adaptive", "neural", "precise", "channels"}
+            )
             voice_profiles = (
                 self.database.load_voice_matcher_profiles()
                 if bool(settings.get("voiceProfilesEnabled", False))
@@ -914,24 +979,25 @@ class EngineServer:
                     "etaMs": None,
                 },
             )
-            if outcome.voice_observations:
+            if outcome.voice_observations or voice_evidence_authoritative:
                 learned = self.database.learn_voice_observations(
                     project_id,
                     outcome.voice_observations,
                     min_confidence=float(settings.get("voiceProfileMinConfidence", 72)) / 100,
+                    replace_project_evidence=voice_evidence_authoritative,
                 )
                 self._apply_voice_assignments(
                     outcome.segments, outcome.voice_observations, learned
                 )
-                self.writer.send("voice_profiles_updated", learned)
-                self.writer.send(
-                    "partial_segments",
-                    {
-                        "projectId": project_id,
-                        "segments": outcome.segments,
-                        "replaceExisting": True,
-                    },
-                )
+                if outcome.voice_observations:
+                    self.writer.send(
+                        "partial_segments",
+                        {
+                            "projectId": project_id,
+                            "segments": outcome.segments,
+                            "replaceExisting": True,
+                        },
+                    )
             project.update(
                 {
                     "segments": outcome.segments,
@@ -943,6 +1009,14 @@ class EngineServer:
                 }
             )
             self.database.save_project(project)
+            if outcome.voice_observations or voice_evidence_authoritative:
+                # Coverage and match metrics are derived from persisted segments.
+                # Query again after saving instead of emitting the pre-save
+                # catalog bundled into the learning result.
+                self.writer.send(
+                    "voice_profiles_updated",
+                    self.database.list_voice_profiles(),
+                )
             self.database.record_evidence(
                 project_id,
                 "transcription_completed",
@@ -1043,6 +1117,88 @@ class EngineServer:
                 if segment.get("speaker") == old_name:
                     segment["speaker"] = str(assignment["name"])
                     segment["speakerProfileId"] = str(assignment["profileId"])
+
+    @staticmethod
+    def _merge_voice_metadata(
+        original_segments: list[dict[str, Any]],
+        assigned_units: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Transfer only speaker evidence; never rebuild or overwrite edited text."""
+        voice_fields = (
+            "speaker",
+            "speakerConfidence",
+            "speakerProfileId",
+            "speakerMatchConfidence",
+            "speakerProvisional",
+            "speakerCluster",
+            "speakerClusterIndex",
+        )
+        merged: list[dict[str, Any]] = []
+        for original in original_segments:
+            start_ms = int(original.get("startMs") or 0)
+            end_ms = int(original.get("endMs") or start_ms)
+            candidates: dict[
+                tuple[str, str | None, int | None],
+                dict[str, Any],
+            ] = {}
+            for unit in assigned_units:
+                overlap = max(
+                    0,
+                    min(end_ms, int(unit.get("endMs") or 0))
+                    - max(start_ms, int(unit.get("startMs") or 0)),
+                )
+                if overlap <= 0:
+                    continue
+                key = (
+                    str(unit.get("speaker") or ""),
+                    (
+                        str(unit["speakerProfileId"])
+                        if unit.get("speakerProfileId")
+                        else None
+                    ),
+                    (
+                        int(unit["speakerClusterIndex"])
+                        if unit.get("speakerClusterIndex") is not None
+                        else None
+                    ),
+                )
+                candidate = candidates.setdefault(
+                    key,
+                    {"overlap": 0, "confidenceWeight": 0.0, "unit": unit},
+                )
+                candidate["overlap"] += overlap
+                candidate["confidenceWeight"] += overlap * float(
+                    unit.get("speakerConfidence") or 0
+                )
+                if overlap > max(
+                    0,
+                    min(end_ms, int(candidate["unit"].get("endMs") or 0))
+                    - max(start_ms, int(candidate["unit"].get("startMs") or 0)),
+                ):
+                    candidate["unit"] = unit
+            if not candidates:
+                merged.append(dict(original))
+                continue
+            winner = max(
+                candidates.values(),
+                key=lambda item: (int(item["overlap"]), float(item["confidenceWeight"])),
+            )["unit"]
+            updated = dict(original)
+            for field in voice_fields:
+                if field in winner:
+                    updated[field] = winner.get(field)
+            if any(
+                original.get(field) != updated.get(field)
+                for field in (
+                    "speaker",
+                    "speakerProfileId",
+                    "speakerConfidence",
+                    "speakerMatchConfidence",
+                )
+            ):
+                updated["speakerReviewState"] = None
+            merged.append(updated)
+        return merged
 
     def _recommended_queue_concurrency(self) -> int:
         if self._queue_hardware is None:

@@ -26,6 +26,7 @@ interface VoicesDialogProps {
   project: TranscriptionProject | null;
   appBusy: boolean;
   onChange: (settings: Partial<AppSettings>) => void;
+  onBeforeLearn?: () => Promise<TranscriptionProject | void>;
   onClose: () => void;
 }
 
@@ -45,7 +46,7 @@ function stageIndex(stage: VoiceLearningProgress["stage"]): number {
   return 0;
 }
 
-export function VoicesDialog({ settings, project, appBusy, onChange, onClose }: VoicesDialogProps) {
+export function VoicesDialog({ settings, project, appBusy, onChange, onBeforeLearn, onClose }: VoicesDialogProps) {
   const [progress, setProgress] = useState<VoiceLearningProgress | null>(null);
   const [error, setError] = useState("");
   const projectId = project?.id;
@@ -93,7 +94,13 @@ export function VoicesDialog({ settings, project, appBusy, onChange, onClose }: 
     });
     onChange({ voiceProfilesEnabled: true, voiceProfileAutoLearn: true });
     try {
-      await engine.learnProjectVoices(project.id);
+      const latestProject = await onBeforeLearn?.();
+      setProgress((current) => current ? {
+        ...current,
+        phase: "Correcciones guardadas",
+        message: "Analizando voces sobre la versiÃ³n mÃ¡s reciente del proyectoâ€¦",
+      } : null);
+      await engine.learnProjectVoices(latestProject ?? project);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       setError(message);

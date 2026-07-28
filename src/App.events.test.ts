@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { routeEngineEvent } from "./lib/engineEvents";
 import { useAppStore } from "./store";
-import { DEFAULT_PROJECT_SETTINGS, type TranscriptSegment, type TranscriptionProject } from "./types";
+import { DEFAULT_PROJECT_SETTINGS, type TranscriptSegment, type TranscriptionProject, type VoiceProfile } from "./types";
 
 const oldSegment: TranscriptSegment = {
   id: "old",
@@ -32,7 +32,10 @@ function project(): TranscriptionProject {
 }
 
 describe("eventos parciales de transcripción", () => {
-  beforeEach(() => useAppStore.getState().setProject(project()));
+  beforeEach(() => {
+    useAppStore.getState().setProject(project());
+    useAppStore.getState().setVoiceProfiles([]);
+  });
 
   it("conserva el texto anterior hasta que llega el primer fragmento nuevo", () => {
     expect(useAppStore.getState().project?.segments).toEqual([oldSegment]);
@@ -85,5 +88,32 @@ describe("eventos parciales de transcripción", () => {
       speaker: "Noel",
       speakerProfileId: "voice-noel",
     });
+  });
+
+  it("mantiene en el estado global el catálogo de perfiles actualizado", () => {
+    const profile: VoiceProfile = {
+      id: "voice-isabel",
+      name: "Isabel",
+      color: "#c9ff48",
+      sampleCount: 8,
+      totalDurationMs: 24_000,
+      matchThreshold: 0.64,
+      enabled: true,
+      ready: true,
+      reliability: "buena",
+      createdAt: "2026-07-28T00:00:00Z",
+      updatedAt: "2026-07-28T00:00:00Z",
+    };
+
+    routeEngineEvent({
+      type: "voice_profiles_updated",
+      payload: {
+        profiles: [profile],
+        encryption: "DPAPI",
+        storesRawAudio: false,
+      },
+    });
+
+    expect(useAppStore.getState().voiceProfiles).toEqual([profile]);
   });
 });
