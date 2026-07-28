@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from transcriptor_engine.database import ProjectDatabase
 from transcriptor_engine.voice_crypto import protect_embedding, unprotect_embedding
@@ -105,3 +106,84 @@ def test_learning_reports_why_uncertain_audio_was_not_stored(tmp_path) -> None:
     assert result["receivedSamples"] == 1
     assert result["rejectedSamples"] == 1
     assert result["rejectionReasons"]["lowConfidence"] == 1
+
+
+def test_duplicate_voice_profiles_can_be_compared_and_merged_transactionally(tmp_path) -> None:
+    database = ProjectDatabase(tmp_path / "voice-merge.sqlite3")
+    voice = _voice(44)
+    first = database.learn_voice_observations(
+        "conversation-one",
+        [{
+            "cluster": 1,
+            "suggestedName": "Hablante 1",
+            "samples": [{
+                "embedding": voice.tolist(),
+                "segmentId": "segment-source",
+                "durationMs": 2_400,
+                "confidence": 0.93,
+            }],
+        }],
+    )
+    source = first["profiles"][0]
+    second = database.learn_voice_observations(
+        "conversation-two",
+        [{
+            "cluster": 1,
+            "suggestedName": "Noel",
+            "samples": [{
+                "embedding": voice.tolist(),
+                "segmentId": "segment-target",
+                "durationMs": 2_000,
+                "confidence": 0.9,
+            }],
+        }],
+    )
+    target = next(profile for profile in second["profiles"] if profile["name"] == "Noel")
+    database.save_project({
+        "id": "conversation-one",
+        "name": "Conversación",
+        "mediaPath": "C:/audio/conversation.wav",
+        "mediaType": "audio",
+        "durationMs": 2_400,
+        "model": "turbo",
+        "createdAt": "2026-07-28T00:00:00Z",
+        "updatedAt": "2026-07-28T00:00:00Z",
+        "transcriptionStatus": "completed",
+        "lastPlaybackPositionMs": 0,
+        "settings": {"language": "es", "model": "turbo"},
+        "segments": [{
+            "id": "segment-source",
+            "startMs": 0,
+            "endMs": 2_400,
+            "text": "Esta voz es de Noel.",
+            "speaker": "Hablante 1",
+            "speakerProfileId": source["id"],
+            "speakerMatchConfidence": 0.91,
+            "confidence": 0.95,
+            "order": 0,
+            "words": [],
+        }],
+    })
+
+    comparison = database.compare_voice_profiles(source["id"], target["id"])
+    assert comparison["similarity"] == pytest.approx(1.0)
+    assert comparison["verdict"] == "alta"
+
+    merged = database.merge_voice_profiles(source["id"], target["id"])
+
+    assert merged["sourceName"] == "Hablante 1"
+    assert merged["targetName"] == "Noel"
+    assert merged["movedSamples"] == 1
+    assert merged["retainedSamples"] == 2
+    assert merged["updatedSegments"] == 1
+    assert merged["affectedProjectIds"] == ["conversation-one"]
+    assert [profile["name"] for profile in merged["catalog"]["profiles"]] == ["Noel"]
+    project = database.load_project("conversation-one")
+    assert project["segments"][0]["speaker"] == "Noel"
+    assert project["segments"][0]["speakerProfileId"] == target["id"]
+    matcher = database.load_voice_matcher_profiles()[0]
+    assert matcher["id"] == target["id"]
+    assert float(np.dot(voice, np.asarray(matcher["centroid"]))) > 0.999
+
+    with pytest.raises(ValueError, match="diferentes"):
+        database.merge_voice_profiles(target["id"], target["id"])

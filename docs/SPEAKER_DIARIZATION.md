@@ -32,10 +32,13 @@ En **Ajustes → Hablantes conocidos** se puede:
 - ver fragmentos aprendidos, duración acumulada, última coincidencia y fiabilidad;
 - pausar un perfil sin borrarlo;
 - ajustar su umbral en modo avanzado;
+- comparar dos perfiles y fusionar duplicados conservando el nombre, color y ajustes del perfil de destino;
 - desactivar el aprendizaje manteniendo el reconocimiento;
 - olvidar por completo una voz.
 
 Los nombres se asignan a las coincidencias del modelo, no a una identidad inferida. Al borrar un perfil se eliminan sus embeddings cifrados, pero las transcripciones históricas conservan el texto y el nombre que ya tenían.
+
+La fusión no se ejecuta automáticamente: primero calcula la similitud real entre los centroides acústicos y muestra una valoración, y después exige confirmación. Las muestras cifradas del perfil de origen se deduplican y se incorporan al destino, su centroide se vuelve a calcular y los segmentos vinculados pasan a utilizar el perfil y el nombre de destino. El perfil de origen se elimina únicamente al completar toda la operación dentro de una transacción.
 
 En un equipo con GPU CUDA, Whisper puede transcribir con la GPU mientras CAM++ analiza las voces con CPU mediante ONNX Runtime. Esto permite usar ambos recursos sin competir por la VRAM principal.
 

@@ -60,4 +60,30 @@ describe("eventos parciales de transcripción", () => {
 
     expect(useAppStore.getState().project?.segments.map((segment) => segment.id)).toEqual(["new-1", "new-2"]);
   });
+
+  it("actualiza el proyecto abierto cuando dos identidades de voz se fusionan", () => {
+    useAppStore.getState().setProject({
+      ...project(),
+      segments: [{
+        ...oldSegment,
+        speaker: "Hablante 1",
+        speakerProfileId: "voice-source",
+      }],
+    });
+
+    routeEngineEvent({
+      type: "voice_profiles_merged",
+      payload: {
+        sourceProfileId: "voice-source",
+        targetProfileId: "voice-noel",
+        targetName: "Noel",
+        affectedProjectIds: ["project-1"],
+      },
+    });
+
+    expect(useAppStore.getState().project?.segments[0]).toMatchObject({
+      speaker: "Noel",
+      speakerProfileId: "voice-noel",
+    });
+  });
 });

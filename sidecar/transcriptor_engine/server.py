@@ -138,6 +138,24 @@ class EngineServer:
                     request_id,
                     self.database.delete_voice_profile(str(payload["profileId"])),
                 )
+            elif action == "compare_voice_profiles":
+                self.writer.result(
+                    request_id,
+                    self.database.compare_voice_profiles(
+                        str(payload["sourceProfileId"]),
+                        str(payload["targetProfileId"]),
+                    ),
+                )
+            elif action == "merge_voice_profiles":
+                if payload.get("confirmed") is not True:
+                    raise ValueError("La fusión de perfiles requiere confirmación explícita.")
+                result = self.database.merge_voice_profiles(
+                    str(payload["sourceProfileId"]),
+                    str(payload["targetProfileId"]),
+                )
+                self.writer.send("voice_profiles_updated", result["catalog"])
+                self.writer.send("voice_profiles_merged", result)
+                self.writer.result(request_id, result)
             elif action == "delete_model":
                 self.writer.result(request_id, delete_model(str(payload["modelId"])))
             elif action == "get_local_ai_status":

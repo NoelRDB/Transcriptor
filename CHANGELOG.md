@@ -10,6 +10,7 @@ Todos los cambios relevantes se documentan aquí. El proyecto sigue versionado s
 - Faster-Whisper con CPU, CUDA, progreso real, cancelación y revisión inteligente.
 - Edición, proyectos persistentes, exportadores y recuperación.
 - Grabación en directo, diarización local y memoria opcional de perfiles de voz.
+- Comparación acústica y fusión segura de perfiles de voz duplicados, conservando muestras y reasignando sus fragmentos.
 - Análisis local con Ollama, cola de trabajos y gestor de modelos.
 - Instaladores NSIS/MSI autocontenidos.
 - Auditoría de privacidad y publicación automatizada mediante GitHub Releases.

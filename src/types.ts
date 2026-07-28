@@ -207,6 +207,31 @@ export interface VoiceProfileCatalog {
   rejectionReasons?: Record<string, number>;
 }
 
+export interface VoiceProfileComparison {
+  sourceProfileId: string;
+  sourceName: string;
+  targetProfileId: string;
+  targetName: string;
+  similarity: number | null;
+  threshold: number;
+  verdict: "alta" | "compatible" | "baja" | "sin_datos";
+}
+
+export interface VoiceProfileMergeResult {
+  merged: boolean;
+  sourceProfileId: string;
+  sourceName: string;
+  targetProfileId: string;
+  targetName: string;
+  targetProfile: VoiceProfile;
+  movedSamples: number;
+  removedSamples: number;
+  retainedSamples: number;
+  updatedSegments: number;
+  affectedProjectIds: string[];
+  catalog: VoiceProfileCatalog;
+}
+
 export interface VoiceLearningProgress {
   projectId: string;
   state: "running" | "completed" | "cancelled" | "failed";

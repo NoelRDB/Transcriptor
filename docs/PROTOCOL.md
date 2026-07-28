@@ -77,4 +77,6 @@ Acciones locales de perfiles:
 
 - `list_voice_profiles`: devuelve nombres, fiabilidad, duración y configuración, sin vectores.
 - `update_voice_profile`: renombra, pausa o ajusta el umbral.
+- `compare_voice_profiles`: calcula la similitud entre dos perfiles sin modificar datos.
+- `merge_voice_profiles`: fusiona el origen en el destino únicamente con `confirmed: true`.
 - `delete_voice_profile`: elimina el perfil y todas sus huellas cifradas.

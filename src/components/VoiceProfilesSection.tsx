@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Check, Fingerprint, Pause, Play, ShieldCheck, Trash2, UsersRound } from "lucide-react";
+import { ArrowRight, Check, Fingerprint, GitMerge, LoaderCircle, Pause, Play, ShieldCheck, Trash2, UsersRound, X } from "lucide-react";
 import { engine } from "../lib/engine";
-import type { AppSettings, EngineEvent, VoiceProfile, VoiceProfileCatalog } from "../types";
+import type { AppSettings, EngineEvent, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison } from "../types";
 
 interface VoiceProfilesSectionProps {
   settings: AppSettings;
@@ -30,6 +30,13 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
   const [learningNotice, setLearningNotice] = useState("");
+  const [mergeSourceId, setMergeSourceId] = useState("");
+  const [mergeTargetId, setMergeTargetId] = useState("");
+  const [comparison, setComparison] = useState<VoiceProfileComparison | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const comparisonToken = useRef(0);
+  const mergeSource = catalog?.profiles.find((profile) => profile.id === mergeSourceId) ?? null;
+  const mergeTarget = catalog?.profiles.find((profile) => profile.id === mergeTargetId) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -98,6 +105,70 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
     }
   }
 
+  function openMerge(profile: VoiceProfile) {
+    comparisonToken.current += 1;
+    setMergeSourceId(profile.id);
+    setMergeTargetId("");
+    setComparison(null);
+    setComparisonLoading(false);
+    setError("");
+  }
+
+  function closeMerge() {
+    comparisonToken.current += 1;
+    setMergeSourceId("");
+    setMergeTargetId("");
+    setComparison(null);
+    setComparisonLoading(false);
+  }
+
+  async function selectMergeTarget(targetId: string) {
+    const token = comparisonToken.current + 1;
+    comparisonToken.current = token;
+    setMergeTargetId(targetId);
+    setComparison(null);
+    setError("");
+    if (!mergeSource || !targetId) {
+      setComparisonLoading(false);
+      return;
+    }
+    setComparisonLoading(true);
+    try {
+      const result = await engine.compareVoiceProfiles(mergeSource.id, targetId);
+      if (comparisonToken.current === token) setComparison(result);
+    } catch (reason) {
+      if (comparisonToken.current === token) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    } finally {
+      if (comparisonToken.current === token) setComparisonLoading(false);
+    }
+  }
+
+  async function mergeProfiles() {
+    if (!mergeSource || !mergeTarget) return;
+    const accepted = window.confirm(
+      `¿Fusionar “${mergeSource.name}” dentro de “${mergeTarget.name}”? ` +
+      `“${mergeSource.name}” desaparecerá como perfil independiente y sus huellas cifradas se incorporarán a “${mergeTarget.name}”.`,
+    );
+    if (!accepted) return;
+    setBusyId(mergeSource.id);
+    setError("");
+    try {
+      const result = await engine.mergeVoiceProfiles(mergeSource.id, mergeTarget.id);
+      setCatalog(result.catalog);
+      setLearningNotice(
+        `Perfiles fusionados: “${result.sourceName}” ahora forma parte de “${result.targetName}”. ` +
+        `${result.retainedSamples} fragmentos y ${result.updatedSegments} segmentos vinculados actualizados.`,
+      );
+      closeMerge();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusyId("");
+    }
+  }
+
   return <section className="voice-profiles" aria-labelledby="voice-profiles-title">
     <div className="voice-profiles-heading">
       <div className="voice-profiles-title">
@@ -133,6 +204,61 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
     </div>}
     {learningNotice ? <p className="voice-learning-notice" role="status"><Check />{learningNotice}</p> : null}
 
+    {mergeSource && catalog && <section className="voice-merge-panel" role="dialog" aria-labelledby="voice-merge-title">
+      <header>
+        <span className="voice-merge-icon"><GitMerge /></span>
+        <div>
+          <small>CORREGIR IDENTIDAD</small>
+          <strong id="voice-merge-title">Fusionar “{mergeSource.name}”</strong>
+          <p>Elige la identidad que quieres conservar. Sumaremos sus huellas y corregiremos los segmentos enlazados.</p>
+        </div>
+        <button type="button" className="voice-merge-close" onClick={closeMerge} aria-label="Cancelar fusión"><X /></button>
+      </header>
+      <div className="voice-merge-flow">
+        <article style={{ "--voice-color": mergeSource.color } as CSSProperties}>
+          <span className="voice-avatar">{mergeSource.name.slice(0, 2).toUpperCase()}</span>
+          <div><small>SE ABSORBE</small><strong>{mergeSource.name}</strong><p>{mergeSource.sampleCount} fragmentos</p></div>
+        </article>
+        <ArrowRight className="voice-merge-arrow" aria-hidden="true" />
+        <label>
+          <span>Conservar este perfil</span>
+          <select
+            aria-label={`Perfil que conservará a ${mergeSource.name}`}
+            value={mergeTargetId}
+            disabled={busyId === mergeSource.id}
+            onChange={(event) => void selectMergeTarget(event.target.value)}
+          >
+            <option value="">Elige la identidad correcta…</option>
+            {catalog.profiles.filter((profile) => profile.id !== mergeSource.id).map((profile) =>
+              <option key={profile.id} value={profile.id}>{profile.name} · {profile.sampleCount} fragmentos</option>
+            )}
+          </select>
+        </label>
+      </div>
+      {comparisonLoading && <div className="voice-merge-comparison loading" role="status"><LoaderCircle />Comparando timbres cifrados…</div>}
+      {comparison && mergeTarget && <div className={`voice-merge-comparison ${comparison.verdict}`}>
+        <div>
+          <small>SIMILITUD ACÚSTICA</small>
+          <strong>{comparison.similarity === null ? "Sin datos suficientes" : `${Math.round(comparison.similarity * 100)} %`}</strong>
+        </div>
+        <span>
+          {comparison.verdict === "alta" && "Coincidencia fuerte: la fusión parece coherente."}
+          {comparison.verdict === "compatible" && "Coincidencia compatible: revisa los nombres y confirma."}
+          {comparison.verdict === "baja" && "Similitud baja: podrían ser personas distintas."}
+          {comparison.verdict === "sin_datos" && "Puedes fusionarlos manualmente, pero aún no hay huella suficiente para compararlos."}
+        </span>
+        {comparison.similarity !== null && <div className="voice-merge-meter" aria-hidden="true"><i style={{ width: `${Math.max(0, Math.min(100, comparison.similarity * 100))}%` }} /></div>}
+      </div>}
+      <footer>
+        <p>La identidad conservada será “{mergeTarget?.name ?? "la que elijas"}”. No se guarda ni copia audio.</p>
+        <button type="button" className="button" onClick={closeMerge} disabled={busyId === mergeSource.id}>Cancelar</button>
+        <button type="button" className="button primary" onClick={() => void mergeProfiles()} disabled={!mergeTarget || comparisonLoading || busyId === mergeSource.id}>
+          {busyId === mergeSource.id ? <LoaderCircle className="voice-merge-spinner" /> : <GitMerge />}
+          {mergeTarget ? `Fusionar en ${mergeTarget.name}` : "Selecciona un destino"}
+        </button>
+      </footer>
+    </section>}
+
     {loading && <div className="voice-profiles-state">Leyendo perfiles cifrados…</div>}
     {!loading && catalog?.profiles.length === 0 && <div className="voice-profiles-empty">
       <span><UsersRound /></span>
@@ -144,7 +270,9 @@ export function VoiceProfilesSection({ settings, advanced, onChange }: VoiceProf
         profile={profile}
         advanced={advanced}
         busy={busyId === profile.id}
+        canMerge={catalog.profiles.length > 1}
         onUpdate={(changes) => void updateProfile(profile, changes)}
+        onMerge={() => openMerge(profile)}
         onDelete={() => void deleteProfile(profile)}
       />)}
     </div>}
@@ -157,11 +285,13 @@ interface VoiceProfileRowProps {
   profile: VoiceProfile;
   advanced: boolean;
   busy: boolean;
+  canMerge: boolean;
   onUpdate: (changes: { name?: string; enabled?: boolean; matchThreshold?: number }) => void;
+  onMerge: () => void;
   onDelete: () => void;
 }
 
-function VoiceProfileRow({ profile, advanced, busy, onUpdate, onDelete }: VoiceProfileRowProps) {
+function VoiceProfileRow({ profile, advanced, busy, canMerge, onUpdate, onMerge, onDelete }: VoiceProfileRowProps) {
   const [name, setName] = useState(profile.name);
   const [threshold, setThreshold] = useState(Math.round(profile.matchThreshold * 100));
 
@@ -213,6 +343,7 @@ function VoiceProfileRow({ profile, advanced, busy, onUpdate, onDelete }: VoiceP
       </label>}
     </div>
     <div className="voice-profile-actions">
+      <button type="button" disabled={busy || !canMerge} onClick={onMerge} aria-label={`Fusionar ${profile.name}`} title="Fusionar con otra identidad"><GitMerge /></button>
       <button type="button" disabled={busy} onClick={() => onUpdate({ enabled: !profile.enabled })} aria-label={profile.enabled ? `Pausar ${profile.name}` : `Activar ${profile.name}`} title={profile.enabled ? "Pausar reconocimiento" : "Activar reconocimiento"}>
         {profile.enabled ? <Pause /> : <Play />}
       </button>

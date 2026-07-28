@@ -1,4 +1,4 @@
-import type { AssistantMessage, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, InsightDepth, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog } from "../types";
+import type { AssistantMessage, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, InsightDepth, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison, VoiceProfileMergeResult } from "../types";
 
 type EventListener = (event: EngineEvent) => void;
 type PendingRequest = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: number };
@@ -116,6 +116,16 @@ class EngineClient {
   }
   deleteVoiceProfile(profileId: string) {
     return this.request<{ deleted: boolean; profileId: string; name: string }>("delete_voice_profile", { profileId });
+  }
+  compareVoiceProfiles(sourceProfileId: string, targetProfileId: string) {
+    return this.request<VoiceProfileComparison>("compare_voice_profiles", { sourceProfileId, targetProfileId });
+  }
+  mergeVoiceProfiles(sourceProfileId: string, targetProfileId: string) {
+    return this.request<VoiceProfileMergeResult>("merge_voice_profiles", {
+      sourceProfileId,
+      targetProfileId,
+      confirmed: true,
+    });
   }
   transcribe(project: TranscriptionProject) { return this.request<{ accepted: boolean }>("transcribe", { project }, 24 * 60 * 60 * 1000); }
   enqueue(project: TranscriptionProject) { return this.request<{ projectId: string; position: number }>("enqueue_transcription", { project }); }

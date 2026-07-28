@@ -563,6 +563,216 @@ class ProjectDatabase:
             db.execute("DELETE FROM voice_profiles WHERE id = ?", (profile_id,))
         return {"deleted": True, "profileId": profile_id, "name": row["name"]}
 
+    def compare_voice_profiles(
+        self,
+        source_profile_id: str,
+        target_profile_id: str,
+    ) -> dict[str, Any]:
+        if source_profile_id == target_profile_id:
+            raise ValueError("El perfil de origen y el de destino deben ser diferentes.")
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT id, name, centroid_blob, match_threshold
+                FROM voice_profiles WHERE id IN (?, ?)""",
+                (source_profile_id, target_profile_id),
+            ).fetchall()
+        profiles = {str(row["id"]): row for row in rows}
+        if source_profile_id not in profiles:
+            raise KeyError("El perfil de voz de origen ya no existe.")
+        if target_profile_id not in profiles:
+            raise KeyError("El perfil de voz de destino ya no existe.")
+        source = profiles[source_profile_id]
+        target = profiles[target_profile_id]
+        similarity: float | None = None
+        try:
+            if source["centroid_blob"] is not None and target["centroid_blob"] is not None:
+                source_centroid = unprotect_embedding(bytes(source["centroid_blob"]))
+                target_centroid = unprotect_embedding(bytes(target["centroid_blob"]))
+                similarity = float(np.clip(np.dot(source_centroid, target_centroid), -1.0, 1.0))
+        except (OSError, ValueError):
+            similarity = None
+        threshold = max(
+            float(source["match_threshold"]),
+            float(target["match_threshold"]),
+        )
+        if similarity is None:
+            verdict = "sin_datos"
+        elif similarity >= threshold + 0.08:
+            verdict = "alta"
+        elif similarity >= threshold:
+            verdict = "compatible"
+        else:
+            verdict = "baja"
+        return {
+            "sourceProfileId": source_profile_id,
+            "sourceName": str(source["name"]),
+            "targetProfileId": target_profile_id,
+            "targetName": str(target["name"]),
+            "similarity": similarity,
+            "threshold": threshold,
+            "verdict": verdict,
+        }
+
+    def merge_voice_profiles(
+        self,
+        source_profile_id: str,
+        target_profile_id: str,
+    ) -> dict[str, Any]:
+        if source_profile_id == target_profile_id:
+            raise ValueError("El perfil de origen y el de destino deben ser diferentes.")
+        now = datetime.now(UTC).isoformat()
+        affected_project_ids: list[str] = []
+        moved_samples = 0
+        removed_samples = 0
+        updated_segments = 0
+        source_name = ""
+        target_name = ""
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT id, name, centroid_blob, sample_count, total_duration_ms,
+                    match_threshold, last_matched_at
+                FROM voice_profiles WHERE id IN (?, ?)""",
+                (source_profile_id, target_profile_id),
+            ).fetchall()
+            profiles = {str(row["id"]): row for row in rows}
+            if source_profile_id not in profiles:
+                raise KeyError("El perfil de voz de origen ya no existe.")
+            if target_profile_id not in profiles:
+                raise KeyError("El perfil de voz de destino ya no existe.")
+            source = profiles[source_profile_id]
+            target = profiles[target_profile_id]
+            source_name = str(source["name"])
+            target_name = str(target["name"])
+
+            affected_project_ids = [
+                str(row["project_id"])
+                for row in db.execute(
+                    """SELECT DISTINCT project_id FROM segments
+                    WHERE speaker_profile_id = ? ORDER BY project_id""",
+                    (source_profile_id,),
+                ).fetchall()
+            ]
+            moved_samples = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM voice_profile_samples WHERE profile_id = ?",
+                    (source_profile_id,),
+                ).fetchone()[0]
+            )
+            db.execute(
+                "UPDATE voice_profile_samples SET profile_id = ? WHERE profile_id = ?",
+                (target_profile_id, source_profile_id),
+            )
+
+            samples = db.execute(
+                """SELECT id, source_project_id, source_segment_id, embedding_blob,
+                    duration_ms, confidence, created_at
+                FROM voice_profile_samples WHERE profile_id = ?
+                ORDER BY confidence DESC, created_at DESC""",
+                (target_profile_id,),
+            ).fetchall()
+            retained: list[sqlite3.Row] = []
+            duplicate_ids: list[str] = []
+            seen_sources: set[tuple[str, str]] = set()
+            for sample in samples:
+                project_id = str(sample["source_project_id"] or "")
+                segment_id = str(sample["source_segment_id"] or "")
+                source_key = (project_id, segment_id)
+                if project_id and segment_id and source_key in seen_sources:
+                    duplicate_ids.append(str(sample["id"]))
+                    continue
+                if project_id and segment_id:
+                    seen_sources.add(source_key)
+                if len(retained) < 80:
+                    retained.append(sample)
+                else:
+                    duplicate_ids.append(str(sample["id"]))
+            if duplicate_ids:
+                db.executemany(
+                    "DELETE FROM voice_profile_samples WHERE id = ?",
+                    [(sample_id,) for sample_id in duplicate_ids],
+                )
+            removed_samples = len(duplicate_ids)
+
+            vectors: list[np.ndarray] = []
+            weights: list[float] = []
+            corrupt_ids: list[str] = []
+            for sample in retained:
+                try:
+                    vector = unprotect_embedding(bytes(sample["embedding_blob"]))
+                    if vector.size != 192 or not np.isfinite(vector).all():
+                        raise ValueError("Huella de voz inválida.")
+                except (OSError, ValueError):
+                    corrupt_ids.append(str(sample["id"]))
+                    continue
+                vectors.append(vector)
+                duration_weight = min(max(float(sample["duration_ms"]) / 1_000.0, 0.65), 6.0)
+                weights.append(max(float(sample["confidence"]), 0.01) * duration_weight)
+            if corrupt_ids:
+                db.executemany(
+                    "DELETE FROM voice_profile_samples WHERE id = ?",
+                    [(sample_id,) for sample_id in corrupt_ids],
+                )
+                removed_samples += len(corrupt_ids)
+
+            centroid: np.ndarray | None = None
+            if vectors:
+                centroid = np.average(np.stack(vectors), axis=0, weights=np.asarray(weights))
+                centroid /= max(float(np.linalg.norm(centroid)), 1e-8)
+            elif target["centroid_blob"] is not None:
+                try:
+                    centroid = unprotect_embedding(bytes(target["centroid_blob"]))
+                except (OSError, ValueError):
+                    centroid = None
+
+            stats = db.execute(
+                """SELECT COUNT(*) AS count, COALESCE(SUM(duration_ms), 0) AS duration
+                FROM voice_profile_samples WHERE profile_id = ?""",
+                (target_profile_id,),
+            ).fetchone()
+            last_matched_at = max(
+                str(source["last_matched_at"] or ""),
+                str(target["last_matched_at"] or ""),
+            ) or None
+            db.execute(
+                """UPDATE voice_profiles SET centroid_blob = ?, sample_count = ?,
+                    total_duration_ms = ?, updated_at = ?, last_matched_at = ?
+                WHERE id = ?""",
+                (
+                    protect_embedding(centroid) if centroid is not None else None,
+                    int(stats["count"]),
+                    int(stats["duration"]),
+                    now,
+                    last_matched_at,
+                    target_profile_id,
+                ),
+            )
+            cursor = db.execute(
+                """UPDATE segments SET speaker_profile_id = ?, speaker = ?
+                WHERE speaker_profile_id = ?""",
+                (target_profile_id, target_name, source_profile_id),
+            )
+            updated_segments = int(cursor.rowcount)
+            db.execute("DELETE FROM voice_profiles WHERE id = ?", (source_profile_id,))
+
+        catalog = self.list_voice_profiles()
+        target_profile = next(
+            profile for profile in catalog["profiles"] if profile["id"] == target_profile_id
+        )
+        return {
+            "merged": True,
+            "sourceProfileId": source_profile_id,
+            "sourceName": source_name,
+            "targetProfileId": target_profile_id,
+            "targetName": target_name,
+            "targetProfile": target_profile,
+            "movedSamples": moved_samples,
+            "removedSamples": removed_samples,
+            "retainedSamples": int(target_profile["sampleCount"]),
+            "updatedSegments": updated_segments,
+            "affectedProjectIds": affected_project_ids,
+            "catalog": catalog,
+        }
+
     def learn_voice_observations(
         self,
         project_id: str,
