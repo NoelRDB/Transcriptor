@@ -1,170 +1,352 @@
-# Transcriptor
+<div align="center">
+  <img src="src-tauri/icons/128x128.png" width="92" alt="Icono de Transcriptor">
 
-Aplicación de escritorio para transcribir audio y vídeo localmente, reproducir el medio y editar el texto sincronizado por segmento o palabra. El MVP prioriza Windows 10/11 y no envía medios, transcripciones ni telemetría a internet.
+  # Transcriptor
 
-## Descargar e instalar
+  ### Convierte audio y vídeo en texto útil, sin sacar tus conversaciones del ordenador.
 
-Las versiones públicas se publican en la sección **Releases** del repositorio. Para Windows 10/11 x64:
+  **Reproduce · transcribe · identifica hablantes · comprende · edita · exporta**
 
-1. Descarga `Transcriptor_<versión>_x64-setup.exe` — es la opción recomendada.
-2. Ejecuta el instalador. No requiere Python, Node.js, Rust, FFmpeg ni CUDA instalados.
-3. En el primer uso, elige qué modelo de reconocimiento quieres descargar. Ningún modelo de varios GB se descarga sin confirmación.
+  [![CI](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml/badge.svg)](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml)
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows11&logoColor=white)](#instalación)
+  [![Privacidad](https://img.shields.io/badge/privacidad-100%25%20local-cbff3d)](#privacidad-por-diseño)
+  [![Tauri](https://img.shields.io/badge/Tauri-2.11-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
+  [![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](https://react.dev/)
+  [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+  [![Licencia MIT](https://img.shields.io/badge/licencia-MIT-f3f3f3)](LICENSE)
 
-También se publica un `.msi` para despliegues administrados y `checksums-SHA256.txt` para comprobar la integridad. Mientras los instaladores no tengan firma de código, Windows SmartScreen puede mostrar una advertencia de editor desconocido; comprueba la suma SHA-256 y descarga exclusivamente desde **Releases**.
+  [Descargar](https://github.com/NoelRDB/Transcriptor/releases) ·
+  [Ver funciones](#qué-hace) ·
+  [Documentación](#documentación) ·
+  [Compilar](#desarrollo) ·
+  [Colaborar](CONTRIBUTING.md)
+</div>
 
-El instalador contiene la aplicación y sus motores, pero **nunca** contiene grabaciones, transcripciones, proyectos, perfiles de voz o modelos de otro usuario.
+<br>
 
-## Estado del MVP
+![Demostración animada de Transcriptor](docs/assets/transcriptor-showcase.svg)
 
-Incluido:
+> [!IMPORTANT]
+> Transcriptor está en desarrollo activo. Antes de una primera versión pública estable, consulta las [limitaciones conocidas](docs/LIMITATIONS.md). Si todavía no aparece un instalador en **Releases**, puedes ejecutarlo desde el código siguiendo la sección de desarrollo.
 
-- Interfaz Tauri 2 + React 19 + TypeScript.
-- Reproductor de audio/vídeo con velocidad, volumen, saltos, atajos y pantalla completa.
-- Panel redimensionable y responsive con sincronización, autoseguimiento, modo de lectura, búsqueda, edición y deshacer/rehacer.
-- Sidecar Python JSONL con Faster-Whisper, VAD, timestamps por palabra, confianza acústica y fallback CUDA → CPU.
-- Tres modos de IA local: Turbo por lotes, Turbo preciso con revisión selectiva Large-v3 y Large-v3 completo.
-- Análisis con FFprobe y fallback PyAV.
-- Progreso basado en tiempo realmente procesado, descarga medida en bytes y cancelación cooperativa.
-- Proyectos SQLite con migraciones, versiones de recuperación, guardado automático y posición de reproducción.
-- Párrafos contextuales que conservan todas las palabras y timestamps; también pueden aplicarse a proyectos existentes.
-- Centro de inteligencia local con análisis profundo Qwen 3.5, puntos trazables, capítulos, señales y mapa conceptual.
-- Grabación y transcripción de micrófono en directo por bloques de latencia configurable, guardada automáticamente como WAV local.
-- Modos Sencillo y Avanzado: valores recomendados o control de voces, latencia, calidad y recursos.
-- Separación neuronal local de dos hablantes con CAM++, confianza por intervención y perfiles de voz opcionales cifrados.
-- Separación acústica ligera entre Hablante 1 y Hablante 2, con reasignación manual desde el editor.
-- Diccionario personal que incorpora correcciones al vocabulario de las siguientes transcripciones.
-- Exportación TXT, SRT, WebVTT y CSV con firma UTF-8 para Windows; JSON estructurado en UTF-8 estándar.
-- Exportación DOCX y PDF, variantes anonimizadas y paquetes portables `.transcriptor` con verificación SHA-256.
-- Centro de operaciones con cola persistente, gestor de modelos, búsqueda semántica local, versiones, marcadores y detector de datos sensibles.
-- Restauración adaptativa de voz, diarización local opcional y creación de una copia de audio/vídeo omitiendo fragmentos seleccionados.
-- Chat local con la transcripción, extractores especializados y respuestas ancladas a instantes verificables.
-- Captura en directo desde micrófono, audio del sistema o mezcla, con idioma fijado por el usuario y marcadores durante la grabación.
-- Consentimiento antes de descargar cada modelo.
-- Tema claro/oscuro/sistema y navegación esencial con teclado.
-- Instaladores NSIS/MSI configurados para Windows.
+## ¿Qué hace?
 
-El laboratorio de IA muestra qué módulos avanzados están activos y cuáles requieren modelos o permisos adicionales. La forma de onda, traducción y actualizaciones automáticas quedan para fases posteriores. Consulta [limitaciones](docs/LIMITATIONS.md).
+Transcriptor reúne en una sola aplicación de escritorio todo el recorrido de una conversación: desde el archivo original hasta una transcripción editable, sincronizada y convertida en conocimiento.
+
+| Área | Qué ofrece |
+|---|---|
+| 🎧 **Audio y vídeo** | Importación de MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, MP4, MOV, MKV, AVI, WEBM y M4V. Reproductor integrado, velocidad, volumen, saltos y pantalla completa. |
+| ✨ **Transcripción local** | Faster-Whisper con CUDA o CPU, timestamps por palabra, VAD, progreso real, resultados parciales, cancelación y recuperación. |
+| 👥 **Hablantes** | Separación neuronal mediante CAM++, confianza por intervención y memoria local de voces cifrada con DPAPI. |
+| 🧠 **Comprensión** | Resumen, puntos clave, capítulos, mapa conceptual y chat con referencias al instante exacto, mediante Ollama y Qwen en local. |
+| ✍️ **Edición** | Texto sincronizado, búsqueda, deshacer/rehacer, autoseguimiento, párrafos contextuales y corrección manual de hablantes. |
+| 📦 **Exportación** | TXT, SRT, WebVTT, CSV, JSON, DOCX, PDF y paquetes portables `.transcriptor`. |
+| 🔒 **Privacidad** | Sin telemetría por defecto, sin nube obligatoria y sin registrar el contenido transcrito. |
+
+## Del archivo al conocimiento, por partes
+
+<table>
+  <tr>
+    <td width="50%">
+      <h3>1. Importa o graba</h3>
+      <p>Arrastra un audio o vídeo, usa el selector de archivos o abre <strong>En directo</strong> para capturar micrófono, audio del sistema o ambos.</p>
+    </td>
+    <td width="50%">
+      <h3>2. El motor analiza el medio</h3>
+      <p>FFprobe identifica duración, códecs y pistas. FFmpeg normaliza únicamente el audio necesario dentro de una carpeta temporal controlada.</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>3. Transcribe a máxima velocidad</h3>
+      <p>El plan automático elige GPU, CPU, memoria, modelo y tamaño de lote según el equipo. El progreso representa audio realmente procesado.</p>
+    </td>
+    <td>
+      <h3>4. Sincroniza cada palabra</h3>
+      <p>La reproducción y la inferencia son independientes. Al reproducir, el fragmento activo se resalta y cualquier marca temporal permite saltar al instante exacto.</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>5. Distingue y recuerda voces</h3>
+      <p>CAM++ genera huellas acústicas locales. Puedes nombrar perfiles, corregirlos y fusionar duplicados después de comparar su similitud real.</p>
+    </td>
+    <td>
+      <h3>6. Comprende y exporta</h3>
+      <p>Edita por párrafos, genera capítulos o puntos clave y exporta el resultado con timestamps, hablantes o anonimización.</p>
+    </td>
+  </tr>
+</table>
+
+```mermaid
+flowchart LR
+    A["Audio, vídeo<br/>o directo"] --> B["Análisis<br/>FFprobe"]
+    B --> C["Normalización<br/>FFmpeg"]
+    C --> D["Transcripción<br/>Faster-Whisper"]
+    D --> E["Voces<br/>CAM++"]
+    E --> F["Párrafos<br/>y revisión"]
+    F --> G["IA local<br/>Ollama + Qwen"]
+    F --> H["TXT · SRT · VTT<br/>JSON · DOCX · PDF"]
+
+    classDef start fill:#d8ff3e,color:#111,stroke:#d8ff3e;
+    classDef local fill:#152021,color:#f2f6f6,stroke:#5f7227;
+    class A,H start;
+    class B,C,D,E,F,G local;
+```
+
+## Transcripción sincronizada
+
+- Resultados parciales mientras el motor continúa trabajando.
+- Resaltado automático por fragmento y por palabra cuando existen timestamps precisos.
+- Clic sobre cualquier intervención para mover el reproductor.
+- Autodesplazamiento inteligente que se pausa mientras editas o navegas manualmente.
+- Lista virtualizada para conversaciones largas.
+- Párrafos contextuales que mantienen todas las palabras y sus tiempos originales.
+- Diccionario personal para nombres propios y términos que quieras conservar.
+
+## Hablantes y memoria de voz
+
+La diarización incluida utiliza **CAM++ de 3D-Speaker** para producir embeddings acústicos normalizados de 192 dimensiones. No identifica civilmente a una persona: primero crea etiquetas como `Hablante 1`, y sólo utiliza un nombre cuando tú lo confirmas.
+
+La memoria de voces:
+
+- está desactivada hasta que el usuario la habilita expresamente;
+- conserva embeddings cifrados con DPAPI, nunca recortes de audio;
+- aprende únicamente de fragmentos suficientemente claros;
+- permite renombrar, pausar, ajustar o eliminar cada perfil;
+- compara perfiles duplicados antes de fusionarlos;
+- conserva las mejores muestras y actualiza las transcripciones vinculadas al fusionar;
+- reutiliza los nombres conocidos en conversaciones futuras.
+
+> [!NOTE]
+> La semejanza vocal es una ayuda organizativa, no una prueba de identidad. Ruido, micrófonos distintos, voces simultáneas o muy parecidas pueden requerir corrección manual.
+
+[Leer cómo funciona la separación de hablantes →](docs/SPEAKER_DIARIZATION.md)
 
 ## Inteligencia local
 
-El botón **Analizar** abre una vista con resumen, puntos clave, capítulos y mapa conceptual. El modo
-**Profundo** usa Ollama y `qwen3.5:9b` en el propio ordenador: estudia bloques temporales completos y
-realiza una segunda pasada de síntesis global. Cada punto conserva un instante verificable y la interfaz
-muestra progreso basado en bloques realmente terminados. El audio y el texto nunca salen del equipo.
+El botón **Analizar** convierte una transcripción terminada en:
 
-El modo **Rápido** mantiene el motor extractivo determinista como alternativa sin LLM. Comprende menos
-contexto y se identifica expresamente como análisis rápido. En modo conversación, ambos métodos evitan
-presentar indicios lingüísticos como diagnósticos sobre las personas.
+- resumen general;
+- puntos clave enlazados a su momento exacto;
+- capítulos;
+- mapa conceptual;
+- señales y extractores especializados;
+- preguntas y respuestas sobre la conversación.
+
+El modo **Profundo** usa Ollama y `qwen3.5:9b` en el ordenador. Divide las conversaciones largas en bloques, procesa el contexto de cada bloque y realiza una segunda síntesis global. El modo **Rápido** usa un análisis extractivo determinista cuando no quieres instalar un LLM.
 
 ```powershell
-# Comprobar la IA local
+# Comprobar Ollama
 ollama --version
 ollama list
 
-# Preparar otro equipo (descarga aproximada: 6,6 GB)
+# Instalar el modelo recomendado, sólo cuando el usuario lo decida
 ollama pull qwen3.5:9b
 ```
 
-Ollama guarda sus modelos por defecto en `%USERPROFILE%\.ollama\models`. La descarga sólo debe hacerse
-con consentimiento explícito del usuario.
+Ollama guarda normalmente sus modelos en `%USERPROFILE%\.ollama\models`. La descarga aproximada es de 6,6 GB y nunca debe iniciarse silenciosamente.
 
 ## Modos de calidad
 
-- **Instantáneo — Turbo por lotes:** máxima velocidad. En la RTX 3070 Laptop probada alcanza aproximadamente 44× sobre voz española limpia.
-- **Profesional — Turbo + Large-v3:** Turbo preciso transcribe todo y Large-v3 vuelve a escuchar sólo los fragmentos con baja confianza. Es el modo recomendado.
-- **Máxima precisión — Large-v3:** utiliza Large-v3 para todo. Consume más tiempo y VRAM; no siempre mejora una grabación limpia.
+| Modo | Motor | Recomendado para |
+|---|---|---|
+| ⚡ **Instantáneo** | Turbo por lotes | Borradores y archivos limpios a velocidad extrema. |
+| ✨ **Profesional IA** | Turbo + revisión selectiva Large-v3 | Mejor equilibrio entre velocidad y precisión. |
+| 🧠 **Máxima fidelidad** | Large-v3 completo | Audio difícil cuando prima la precisión sobre el tiempo. |
 
-Las cifras dependen del ruido, duración, temperatura, energía disponible y tipo de voz. La aplicación muestra velocidad y uso reales durante cada trabajo.
+En el modo sencillo, Transcriptor analiza el hardware y configura automáticamente dispositivo, hilos, memoria, modelo y lote. El modo avanzado permite ajustar recursos, sensibilidad de hablantes, número máximo de voces y latencia del directo.
 
-## Requisitos de desarrollo
+Las velocidades dependen del ruido, el modelo, la duración, la refrigeración y el hardware. La interfaz muestra rendimiento, VRAM, RAM, CPU, audio procesado y tiempo restante medidos durante el trabajo; no inventa porcentajes.
 
-- Windows 10 u 11 con WebView2.
+## Transcripción en directo
+
+1. Pulsa **En directo**.
+2. Elige micrófono, audio del sistema o mezcla.
+3. Fija el idioma o utiliza detección automática.
+4. Selecciona la latencia recomendada o una configuración avanzada.
+5. Empieza a hablar.
+
+Cada bloque PCM se guarda localmente antes de procesarse. El texto provisional aparece mientras hablas y, al detener, la aplicación finaliza un WAV reproducible y crea un proyecto normal para corregir, analizar o exportar.
+
+## Privacidad por diseño
+
+```text
+Tus archivos ──► tu ordenador ──► tus proyectos
+                     │
+                     └── Nada se sube sin una acción explícita
+```
+
+- El audio, el vídeo, la transcripción y las huellas de voz se procesan localmente.
+- La telemetría está desactivada por defecto.
+- Los logs técnicos no contienen texto transcrito.
+- Los diagnósticos ocultan rutas personales.
+- Los perfiles de voz se cifran para la cuenta actual de Windows.
+- Cada usuario y cada ordenador poseen su propia base de datos.
+- El repositorio y los instaladores **no contienen proyectos, grabaciones, perfiles, modelos ni caché**.
+- Desinstalar la aplicación no borra silenciosamente los proyectos personales.
+
+[Consultar la política completa de datos locales →](docs/PRIVACY.md)
+
+## Instalación
+
+### Instalador de Windows
+
+Cuando exista una versión publicada:
+
+1. Abre [GitHub Releases](https://github.com/NoelRDB/Transcriptor/releases).
+2. Descarga `Transcriptor_<versión>_x64-setup.exe`.
+3. Comprueba `checksums-SHA256.txt`.
+4. Ejecuta el instalador.
+5. Elige qué modelos quieres descargar en el primer uso.
+
+El usuario final no necesita instalar Python, Node.js, Rust ni FFmpeg. También puede publicarse un `.msi` para despliegues administrados.
+
+Mientras no haya firma de código, Windows SmartScreen puede mostrar “editor desconocido”. Descarga exclusivamente desde este repositorio y compara el SHA-256.
+
+### Formatos admitidos
+
+| Audio | Vídeo |
+|---|---|
+| MP3, WAV, M4A, AAC, FLAC, OGG, OPUS | MP4, MOV, MKV, AVI, WEBM, M4V |
+
+## Desarrollo
+
+### Requisitos
+
+- Windows 10 u 11 y WebView2.
 - Node.js 18.20 o posterior.
-- Rust estable con el toolchain MSVC y Visual Studio Build Tools C++.
-- `uv`.
-- Python 3.12, gestionado automáticamente por `uv`.
+- Rust estable con toolchain MSVC.
+- Visual Studio Build Tools con C++.
+- `uv`; Python 3.12 se gestiona desde el proyecto.
 
-## Puesta en marcha
+### Ejecutar localmente
 
 ```powershell
+git clone https://github.com/NoelRDB/Transcriptor.git
+cd Transcriptor
+
 npm install
 uv sync --project sidecar --extra dev
 npm run sidecar:build
 npm run tauri dev
 ```
 
-La vista del frontend se puede abrir sin Rust con `npm run dev`. Permite revisar la interfaz y reproducir un archivo, pero la transcripción real sólo se habilita dentro de Tauri.
+La interfaz también se puede abrir con `npm run dev`, pero la transcripción real requiere Tauri y el sidecar.
 
-## Comprobaciones
+### Comprobaciones
 
 ```powershell
+# Todo el proyecto
+npm run check
+
+# Comandos individuales
 npm run lint
 npm run test
 npm run build
+npm run sidecar:lint
 npm run sidecar:test
+npm run release:verify
 ```
 
-Comprobación completa:
+Las pruebas cubren timestamps, sincronización, exportadores, Unicode, persistencia, migraciones, cancelación, recuperación, cola, directo, diarización, perfiles de voz y análisis local.
 
-```powershell
-npm run check
-```
+## Crear instaladores
 
-## Crear instaladores Windows
-
-Para distribuir todos los formatos sin instalaciones manuales en el equipo del usuario final, prepara una compilación redistribuible LGPL de FFmpeg/FFprobe y ejecuta:
+Prepara una compilación redistribuible LGPL de FFmpeg/FFprobe y ejecuta:
 
 ```powershell
 .\scripts\stage-ffmpeg.ps1 -ArchivePath C:\ruta\ffmpeg-lgpl-shared.zip
 npm run package:windows
 ```
 
-Los instaladores se generan bajo `src-tauri\target\release\bundle`. Lee primero [empaquetado y licencias](docs/PACKAGING.md).
+Los paquetes NSIS/MSI se generan en `src-tauri\target\release\bundle`; los artefactos finales y sus sumas SHA-256 se copian a `release/`. Ambas ubicaciones están excluidas de Git.
 
-El comando también copia los artefactos finales y sus sumas SHA-256 a `release/`. Esa carpeta es local y está excluida de Git.
+[Leer la guía de empaquetado y licencias →](docs/PACKAGING.md)
 
-## Datos locales
+## ¿Dónde se guardan los datos?
 
-En Windows se utilizan estas ubicaciones:
+| Contenido | Ubicación predeterminada en Windows |
+|---|---|
+| Proyectos y configuración | `%LOCALAPPDATA%\Transcriptor\transcriptor.sqlite3` |
+| Grabaciones | `%LOCALAPPDATA%\Transcriptor\recordings` |
+| Modelos Whisper/CAM++ | `%LOCALAPPDATA%\Transcriptor\models` |
+| Modelos Ollama | `%USERPROFILE%\.ollama\models` |
+| Paquetes importados | `%LOCALAPPDATA%\Transcriptor\imports` |
+| Logs técnicos | `%LOCALAPPDATA%\Transcriptor\logs` |
 
-- Proyectos: `%LOCALAPPDATA%\Transcriptor\transcriptor.sqlite3`
-- Modelos: `%LOCALAPPDATA%\Transcriptor\models`
-- Modelo contextual Qwen/Ollama: `%USERPROFILE%\.ollama\models`
-- Grabaciones: `%LOCALAPPDATA%\Transcriptor\recordings`
-- Registros técnicos: `%LOCALAPPDATA%\Transcriptor\logs`
-- Paquetes importados: `%LOCALAPPDATA%\Transcriptor\imports`
-- Temporales de PyInstaller: gestionados por el sistema durante la ejecución del sidecar.
+Los archivos originales no se almacenan como binarios dentro de SQLite. El proyecto conserva su ruta y permite relocalizar el medio si se ha movido.
 
-Los archivos originales no se copian a la base de datos. El proyecto conserva su ruta para reproducirlos de nuevo.
-Cada cuenta de Windows recibe su propio `%LOCALAPPDATA%`: los proyectos de dos usuarios o dos ordenadores no se enlazan entre sí. Desinstalar la aplicación no borra silenciosamente los proyectos personales. Consulta la [política de privacidad local](docs/PRIVACY.md).
+## Arquitectura
 
-## Grabación en directo
+```text
+React + TypeScript
+        │ mensajes y eventos JSONL tipados
+        ▼
+Tauri 2 / Rust ───── reproductor y acceso seguro al sistema
+        │
+        ▼
+Sidecar Python
+  ├─ FFmpeg / FFprobe
+  ├─ Faster-Whisper
+  ├─ CAM++ / ONNX Runtime
+  ├─ Ollama / Qwen
+  ├─ SQLite + migraciones
+  └─ exportadores y diagnósticos
+```
 
-Pulsa **En directo**, elige micrófono, audio del sistema o una mezcla y comienza a hablar. La aplicación convierte el audio a PCM mono de 16 kHz, guarda cada bloque localmente antes de transcribirlo y muestra resultados provisionales. El perfil equilibrado usa bloques aproximados de 0,8–1,5 segundos y el perfil ultrabajo puede reducirlos a 0,6–1,1 segundos. El idioma queda fijado por el usuario. Al detener, finaliza un WAV reproducible y crea un proyecto normal que se puede editar, analizar y exportar.
+La interfaz nunca espera de forma síncrona a la extracción o inferencia. La cola persiste los trabajos, limita la concurrencia según los recursos y emite progreso estructurado al frontend.
 
-La separación de dos hablantes incluida es neuronal y privada: CAM++ genera huellas acústicas de 192 dimensiones y el motor aplica histéresis para estabilizar las etiquetas. La memoria reutilizable está desactivada inicialmente; al activarla con consentimiento, Windows cifra los embeddings con DPAPI, aprende únicamente de fragmentos claros y permite renombrar, pausar o borrar cada voz desde Ajustes. No guarda copias de audio en los perfiles. Si el modelo opcional de unos 27 MiB no está instalado, vuelve al comparador acústico compatible. Consulta [la arquitectura de diarización y los perfiles de voz](docs/SPEAKER_DIARIZATION.md).
+## Estado y próximos pasos
 
-## Atajos
+- [x] Transcripción local progresiva.
+- [x] Reproductor sincronizado y edición.
+- [x] GPU CUDA con fallback explicado a CPU.
+- [x] Directo con idioma y latencia configurables.
+- [x] Separación neuronal y memoria cifrada de voces.
+- [x] Comparación y fusión de perfiles duplicados.
+- [x] Análisis local profundo y mapa conceptual.
+- [x] Cola persistente y trabajos paralelos.
+- [x] Exportadores y paquetes portables.
+- [ ] Firma de código para Windows.
+- [ ] Primer instalador público estable.
+- [ ] Forma de onda interactiva.
+- [ ] Traducción local.
+- [ ] Soporte validado para macOS y Linux.
 
-- `Espacio`: reproducir/pausar.
-- `←` / `→`: retroceder/avanzar el intervalo configurado.
-- `Enter` o `Espacio` sobre un fragmento: saltar a su inicio.
-- `Ctrl+Enter` mientras se edita: aplicar el cambio.
-- `Esc` mientras se edita: cancelar.
-- Flechas sobre el divisor: ajustar el ancho de los paneles.
-- Botón de ampliar en el panel derecho: ocultar o recuperar temporalmente el reproductor.
+Consulta el [historial de cambios](CHANGELOG.md) y las [limitaciones conocidas](docs/LIMITATIONS.md).
 
 ## Documentación
 
 - [Arquitectura](docs/ARCHITECTURE.md)
 - [Protocolo frontend–sidecar](docs/PROTOCOL.md)
-- [Empaquetado](docs/PACKAGING.md)
-- [Publicación de versiones](docs/RELEASING.md)
+- [Separación de hablantes](docs/SPEAKER_DIARIZATION.md)
 - [Privacidad y datos locales](docs/PRIVACY.md)
-- [Limitaciones](docs/LIMITATIONS.md)
-- [Avisos de terceros](docs/THIRD_PARTY_NOTICES.md)
-- [Seguridad](SECURITY.md)
+- [Empaquetado para Windows](docs/PACKAGING.md)
+- [Publicación de versiones](docs/RELEASING.md)
+- [Limitaciones conocidas](docs/LIMITATIONS.md)
+- [Avisos y licencias de terceros](docs/THIRD_PARTY_NOTICES.md)
+- [Política de seguridad](SECURITY.md)
+
+## Colaborar
+
+Los informes de errores y pull requests son bienvenidos. Antes de contribuir:
+
+1. Lee [CONTRIBUTING.md](CONTRIBUTING.md).
+2. No adjuntes grabaciones ni transcripciones personales.
+3. Usa medios pequeños, generados o legalmente reutilizables para las pruebas.
+4. Ejecuta `npm run check`.
+5. Explica el efecto sobre privacidad, rendimiento y empaquetado.
 
 ## Licencia
 
-El código propio de Transcriptor se distribuye bajo la [licencia MIT](LICENSE). Los motores, bibliotecas y modelos de terceros conservan sus licencias y condiciones respectivas.
+El código propio de Transcriptor se publica bajo [MIT](LICENSE). FFmpeg, Faster-Whisper, CTranslate2, CAM++, modelos y demás componentes conservan sus respectivas licencias y condiciones. Consulta [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md) antes de redistribuir binarios.
+
+<div align="center">
+  <br>
+  <strong>Hecho para que tus conversaciones se conviertan en conocimiento sin dejar de ser tuyas.</strong>
+  <br><br>
+  <a href="https://github.com/NoelRDB/Transcriptor/issues">Reportar un problema</a>
+  ·
+  <a href="https://github.com/NoelRDB/Transcriptor/discussions">Proponer una idea</a>
+</div>

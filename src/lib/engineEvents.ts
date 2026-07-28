@@ -1,12 +1,29 @@
 import { engine } from "./engine";
 import { shouldRouteEngineEvent } from "./jobs";
 import { useAppStore } from "../store";
-import type { EngineEvent, JobProgress, TranscriptSegment } from "../types";
+import type { EngineEvent, JobProgress, TranscriptSegment, VoiceProfileMergeResult } from "../types";
 
 export function routeEngineEvent(event: EngineEvent): void {
   const state = useAppStore.getState();
   const payload = event.payload as Record<string, any>;
   if (!shouldRouteEngineEvent(event.type, event.payload, state.project?.id)) return;
+  if (event.type === "voice_profiles_merged") {
+    const merged = event.payload as VoiceProfileMergeResult;
+    const project = state.project;
+    if (!project || !merged.affectedProjectIds.includes(project.id)) return;
+    let changed = false;
+    const segments = project.segments.map((segment) => {
+      if (segment.speakerProfileId !== merged.sourceProfileId) return segment;
+      changed = true;
+      return {
+        ...segment,
+        speaker: merged.targetName,
+        speakerProfileId: merged.targetProfileId,
+      };
+    });
+    if (changed) state.setSegments(segments);
+    return;
+  }
   if (["transcription_progress", "audio_extraction_progress", "audio_enhancement_progress", "model_download_progress", "job_started"].includes(event.type)) {
     state.setProgress(payload as unknown as Partial<JobProgress>);
   }
