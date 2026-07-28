@@ -1,0 +1,45 @@
+name: Comprobaciones
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Código, tipos y pruebas
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Preparar uv y Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: sidecar/uv.lock
+
+      - name: Instalar dependencias fijadas
+        shell: pwsh
+        run: |
+          npm ci
+          uv sync --project sidecar --extra dev --locked
+
+      - name: Auditar privacidad de la publicación
+        shell: pwsh
+        run: ./scripts/verify-release.ps1
+
+      - name: Ejecutar lint, tipos y pruebas
+        run: npm run check

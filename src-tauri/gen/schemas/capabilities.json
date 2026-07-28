@@ -1,0 +1,1 @@
+{"desktop-main":{"identifier":"desktop-main","description":"Permisos mínimos para la ventana principal de Transcriptor","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save","shell:allow-stdin-write",{"identifier":"shell:allow-spawn","allow":[{"args":["serve"],"name":"binaries/transcriptor-engine","sidecar":true}]}]}}

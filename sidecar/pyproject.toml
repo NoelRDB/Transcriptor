@@ -1,0 +1,44 @@
+[project]
+name = "transcriptor-engine"
+version = "0.1.0"
+description = "Motor local de transcripción para Transcriptor"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+  "av==18.0.0",
+  "faster-whisper==1.2.1",
+  "kaldi-native-fbank==1.22.3",
+  "nvidia-cublas-cu12==12.9.2.10",
+  "nvidia-cudnn-cu12==9.25.0.15",
+  "psutil==7.2.2",
+  "python-docx==1.2.0",
+  "reportlab==5.0.0",
+  "onnxruntime==1.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pyinstaller==6.21.0",
+  "pytest==9.0.2",
+  "ruff==0.14.14",
+]
+
+[project.scripts]
+transcriptor-engine = "transcriptor_engine.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["transcriptor_engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

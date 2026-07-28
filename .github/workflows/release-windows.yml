@@ -1,0 +1,104 @@
+name: Publicar instaladores de Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows-x64:
+    name: Windows 10/11 x64
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v7
+
+      - name: Preparar Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Preparar Rust estable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Preparar caché de Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Preparar uv y Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: sidecar/uv.lock
+
+      - name: Instalar dependencias fijadas
+        shell: pwsh
+        run: |
+          npm ci
+          uv sync --project sidecar --extra dev --locked
+
+      - name: Preparar FFmpeg redistribuible y verificado
+        shell: pwsh
+        env:
+          FFMPEG_ARCHIVE_URL: ${{ vars.FFMPEG_ARCHIVE_URL }}
+          FFMPEG_ARCHIVE_SHA256: ${{ vars.FFMPEG_ARCHIVE_SHA256 }}
+        run: |
+          if (-not $env:FFMPEG_ARCHIVE_URL -or -not $env:FFMPEG_ARCHIVE_SHA256) {
+            throw "Configura FFMPEG_ARCHIVE_URL y FFMPEG_ARCHIVE_SHA256 en Variables de Actions."
+          }
+          ./scripts/fetch-ffmpeg.ps1 `
+            -Url $env:FFMPEG_ARCHIVE_URL `
+            -Sha256 $env:FFMPEG_ARCHIVE_SHA256
+
+      - name: Comprobar código, privacidad y pruebas
+        shell: pwsh
+        run: |
+          ./scripts/verify-release.ps1
+          npm run check
+
+      - name: Construir el sidecar local
+        shell: pwsh
+        run: ./scripts/build-sidecar.ps1 -TargetTriple x86_64-pc-windows-msvc
+
+      - name: Construir y publicar instaladores
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Transcriptor ${{ github.ref_name }}"
+          releaseBody: |
+            Transcriptor para Windows 10/11 x64.
+
+            Descarga recomendada: el archivo `*-setup.exe`.
+            El procesamiento es local: el instalador no contiene grabaciones,
+            transcripciones, proyectos ni modelos de ningún usuario.
+
+            Consulta `checksums-SHA256.txt` para verificar la descarga.
+          releaseDraft: false
+          prerelease: false
+          args: "--target x86_64-pc-windows-msvc"
+
+      - name: Verificar y generar sumas SHA-256
+        shell: pwsh
+        run: ./scripts/verify-release.ps1 -RequireInstallers -StageArtifacts
+
+      - name: Adjuntar sumas de integridad
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" .\release\checksums-SHA256.txt --clobber

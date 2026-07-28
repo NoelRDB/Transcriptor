@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Transcriptor",
+  "version": "0.1.0",
+  "identifier": "com.transcriptor.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Transcriptor",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 420,
+        "minHeight": 420,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "externalBin": ["binaries/transcriptor-engine"],
+    "resources": {
+      "resources/cuda/": "cuda/",
+      "../LICENSE": "licenses/Transcriptor-MIT.txt",
+      "../docs/THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md"
+    },
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "copyright": "© 2026 Transcriptor contributors",
+    "category": "Productivity",
+    "shortDescription": "Transcripción local y privada",
+    "longDescription": "Transcribe audio y vídeo localmente y edita el texto sincronizado con la reproducción.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "displayLanguageSelector": true,
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
