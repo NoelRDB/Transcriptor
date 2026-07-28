@@ -4,9 +4,10 @@
 
 1. Crea o enlaza un repositorio público de GitHub.
 2. Activa GitHub Actions.
-3. En **Settings → Secrets and variables → Actions → Variables** define:
+3. Opcionalmente, en **Settings → Secrets and variables → Actions → Variables** puedes sustituir la compilación FFmpeg fijada:
    - `FFMPEG_ARCHIVE_URL`: URL HTTPS de una versión exacta `win64-lgpl`, nunca `latest`.
    - `FFMPEG_ARCHIVE_SHA256`: suma SHA-256 de ese ZIP.
+   Si no defines estas variables, el workflow utiliza los valores exactos versionados en el propio archivo.
 4. Configura un certificado de firma de código antes de una versión estable destinada a usuarios no técnicos. No guardes el `.pfx` ni su contraseña en Git.
 
 ## Preparar la versión
@@ -59,10 +60,13 @@ La etiqueta debe coincidir exactamente con la versión. El flujo `.github/workfl
 4. ejecuta lint, tipos y pruebas;
 5. crea el sidecar autocontenido;
 6. genera NSIS y MSI;
-7. publica ambos en GitHub Releases;
-8. adjunta las sumas SHA-256.
+7. crea una GitHub Release en borrador y adjunta ambos instaladores;
+8. valida formatos, runtime, licencias, tamaños y sumas SHA-256;
+9. hace pública la Release únicamente si todas las comprobaciones terminan correctamente.
 
 No se sube `%LOCALAPPDATA%`, el contenido del directorio de trabajo ni ningún archivo que no esté versionado. GitHub Actions parte de un clon limpio del repositorio.
+
+La etiqueta debe tener exactamente el formato `vX.Y.Z` y coincidir con los cuatro manifiestos. Una etiqueta incorrecta detiene la publicación antes de hacer visible ningún instalador.
 
 ## Comprobación final
 

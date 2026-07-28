@@ -27,7 +27,7 @@ Para automatización existe un segundo script que exige HTTPS y una suma SHA-256
   -Sha256 <64-caracteres-hexadecimales>
 ```
 
-No uses la URL flotante `latest` en una publicación: el contenido puede cambiar sin que cambie la dirección. El flujo de GitHub lee `FFMPEG_ARCHIVE_URL` y `FFMPEG_ARCHIVE_SHA256` de **Settings → Secrets and variables → Actions → Variables** y se detiene si faltan o si la suma no coincide. Además rechaza automáticamente compilaciones que declaren `--enable-gpl` o `--enable-nonfree`.
+No uses la URL flotante `latest` en una publicación: el contenido puede cambiar sin que cambie la dirección. El flujo de GitHub conserva una compilación LGPL exacta y su SHA-256 como valor reproducible. Si hay que actualizarla, `FFMPEG_ARCHIVE_URL` y `FFMPEG_ARCHIVE_SHA256` en **Settings → Secrets and variables → Actions → Variables** permiten sustituir ambos valores sin debilitar la comprobación. Además, el flujo rechaza automáticamente compilaciones que declaren `--enable-gpl` o `--enable-nonfree`.
 
 ## Firma
 
@@ -49,14 +49,19 @@ El script se detiene si faltan Rust, Cargo, `uv`, npm o FFmpeg. Ejecuta todas la
 - El instalador incorpora el bootstrapper de WebView2; Windows 10/11 normalmente ya incluye el runtime.
 - El sidecar incluye el runtime de Python y FFmpeg.
 - CUDA acelera equipos NVIDIA compatibles; si no existe una GPU válida, el motor vuelve a CPU.
-- Los modelos Whisper, CAM++ y Ollama no forman parte del instalador principal.
+- Los textos de licencia de las dependencias Python y NVIDIA se recopilan desde las versiones fijadas y se incluyen dentro del instalador.
+- Los modelos Whisper, CAM++ y Ollama no forman parte del instalador principal, pero Whisper y CAM++ se instalan desde la propia interfaz con confirmación y progreso.
 - Proyectos, grabaciones y perfiles se crean después de instalar, dentro del perfil local de cada usuario, y jamás bajo `Program Files` ni dentro del repositorio.
 
 ## Modelos
 
-Los modelos Whisper no se incluyen en el instalador. El usuario elige y confirma la primera descarga, ve el nombre del modelo y puede cancelar antes de comenzar. Esto mantiene pequeño el instalador y evita descargas de varios GB sin consentimiento.
+Los modelos Whisper no se incluyen dentro del `.exe` o `.msi`. El usuario elige y confirma la primera descarga desde la propia aplicación, ve el nombre, el espacio requerido y el progreso, y puede cancelar antes de comenzar. No necesita Git, Python ni una consola.
+
+Esta separación es necesaria: Turbo ocupa aproximadamente 1,6 GiB, Large-v3 3,1 GiB y el modelo Qwen recomendado por Ollama alrededor de 6,6 GB. Incluirlos todos convertiría la descarga inicial en más de 11 GB; además, Large-v3 junto al runtime superaría el límite de 2 GiB por archivo de GitHub Releases. Los pesos conservan también sus propias fichas y condiciones de licencia. Por esas razones el instalador contiene el gestor de modelos, no los pesos de todos los modelos.
 
 Para CUDA se redistribuyen únicamente `cublas64_12.dll`, `cublasLt64_12.dll` y `cudnn64_9.dll`, que son las bibliotecas cargadas por CTranslate2 durante una inferencia Whisper verificada en Windows. El resto de módulos opcionales del paquete NVIDIA no se copia: superaría el límite de NSIS sin intervenir en este flujo. El script falla si falta cualquiera de las tres bibliotecas requeridas.
+
+Los instaladores actuales ocupan aproximadamente 633 MiB (NSIS) y 731 MiB (MSI). `verify-release.ps1` impide publicar cualquier artefacto que alcance el límite de 2 GiB de GitHub.
 
 ## macOS y Linux
 

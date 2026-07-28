@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any
 
 from .paths import models_dir
+
+GIB = 1024**3
+DOWNLOAD_HEADROOM_BYTES = 512 * 1024**2
+REQUIRED_MODEL_FILES = (
+    "config.json",
+    "model.bin",
+    "tokenizer.json",
+    "vocabulary.json",
+)
 
 MODEL_CATALOG = (
     {
@@ -15,6 +25,7 @@ MODEL_CATALOG = (
         "speed": "Extrema",
         "accuracy": "Básica",
         "description": "Pruebas rápidas y equipos con muy poca memoria.",
+        "recommended": False,
     },
     {
         "id": "small",
@@ -24,6 +35,7 @@ MODEL_CATALOG = (
         "speed": "Muy rápida",
         "accuracy": "Buena",
         "description": "Audio claro y transcripciones cotidianas.",
+        "recommended": False,
     },
     {
         "id": "turbo",
@@ -33,6 +45,7 @@ MODEL_CATALOG = (
         "speed": "Rápida",
         "accuracy": "Muy buena",
         "description": "Mejor equilibrio para directo y primera pasada.",
+        "recommended": True,
     },
     {
         "id": "large-v3",
@@ -42,6 +55,7 @@ MODEL_CATALOG = (
         "speed": "Exigente",
         "accuracy": "Máxima",
         "description": "Acentos difíciles, ruido y revisión profesional.",
+        "recommended": False,
     },
 )
 
@@ -53,12 +67,45 @@ def list_models() -> dict[str, Any]:
     for model in MODEL_CATALOG:
         paths = _model_paths(root, str(model["id"]))
         installed_bytes = sum(_directory_size(path) for path in paths if path.is_dir())
+        ready_path = next(
+            (
+                path
+                for path in paths
+                if _has_complete_model_files(path)
+            ),
+            None,
+        )
+        present_files = {
+            filename
+            for filename in REQUIRED_MODEL_FILES
+            if any((path / filename).is_file() for path in paths)
+        }
+        missing_files = [
+            filename for filename in REQUIRED_MODEL_FILES if filename not in present_files
+        ]
+        download_bytes = max(
+            0,
+            round(float(model["sizeGiB"]) * GIB) - installed_bytes,
+        )
+        installed = ready_path is not None
+        required_free_bytes = 0 if installed else download_bytes + DOWNLOAD_HEADROOM_BYTES
         entries.append(
             {
                 **model,
-                "installed": installed_bytes > 0 and any((path / "config.json").is_file() for path in paths),
+                "installed": installed,
                 "installedBytes": installed_bytes,
                 "paths": [str(path) for path in paths if path.exists()],
+                "integrity": (
+                    "ready"
+                    if installed
+                    else "partial"
+                    if installed_bytes > 0
+                    else "missing"
+                ),
+                "missingFiles": [] if installed else missing_files,
+                "downloadBytes": download_bytes,
+                "requiredFreeBytes": required_free_bytes,
+                "canInstall": installed or disk.free >= required_free_bytes,
             }
         )
     return {"models": entries, "root": str(root), "freeBytes": disk.free}
@@ -93,3 +140,19 @@ def _model_paths(root: Path, model_id: str) -> list[Path]:
 
 def _directory_size(path: Path) -> int:
     return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _has_complete_model_files(path: Path) -> bool:
+    model_binary = path / "model.bin"
+    if not model_binary.is_file() or model_binary.stat().st_size < 1024**2:
+        return False
+    for filename in ("config.json", "tokenizer.json", "vocabulary.json"):
+        candidate = path / filename
+        if not candidate.is_file() or candidate.stat().st_size < 2:
+            return False
+        try:
+            with candidate.open("r", encoding="utf-8") as stream:
+                json.load(stream)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+    return True

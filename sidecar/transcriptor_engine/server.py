@@ -763,9 +763,28 @@ class EngineServer:
                 self._analysis_jobs.pop(project_id, None)
 
     def _start_model_download(self, request_id: str, model_id: str) -> None:
-        allowed = {str(item["id"]) for item in list_models()["models"]}
-        if model_id not in allowed:
+        catalog = list_models()
+        selected = next(
+            (item for item in catalog["models"] if str(item["id"]) == model_id),
+            None,
+        )
+        if selected is None:
             raise ValueError("El modelo solicitado no pertenece al catálogo permitido.")
+        if selected["installed"]:
+            self.writer.result(
+                request_id,
+                {"accepted": True, "modelId": model_id, "alreadyInstalled": True},
+            )
+            self.writer.send("model_manager_completed", {"modelId": model_id, **catalog})
+            return
+        if not selected["canInstall"]:
+            needed_gib = float(selected["requiredFreeBytes"]) / 1024**3
+            free_gib = float(catalog["freeBytes"]) / 1024**3
+            raise OSError(
+                f"No hay espacio suficiente para {selected['name']}. "
+                f"Se necesitan {needed_gib:.1f} GB libres y hay {free_gib:.1f} GB. "
+                "Libera espacio o cambia la carpeta de modelos."
+            )
         with self._jobs_lock:
             if model_id in self._model_downloads:
                 raise ValueError("Ese modelo ya se está descargando.")

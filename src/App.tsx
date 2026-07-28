@@ -16,6 +16,7 @@ import { InsightsDialog } from "./components/InsightsDialog";
 import { LiveRecorderDialog } from "./components/LiveRecorderDialog";
 import { DiagnosticsDialog } from "./components/DiagnosticsDialog";
 import { VoicesDialog } from "./components/VoicesDialog";
+import { ModelSetupDialog } from "./components/ModelSetupDialog";
 import { learnFromCorrection, vocabularyPrompt } from "./lib/dictionary";
 import { formatClock } from "./lib/time";
 import { buildAutomaticPlan } from "./lib/automaticPlan";
@@ -27,6 +28,7 @@ export default function App() {
   const [showLive, setShowLive] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showVoices, setShowVoices] = useState(false);
+  const [showModelSetup, setShowModelSetup] = useState(false);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [assistantAnswers, setAssistantAnswers] = useState<AssistantAnswer[]>([]);
@@ -254,6 +256,15 @@ export default function App() {
   useEffect(() => {
     if (!engine.available) return;
     engine.listProjects().then(useAppStore.getState().setRecentProjects).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (
+      !engine.available
+      || localStorage.getItem("transcriptor.model-onboarding.v1") === "completed"
+      || sessionStorage.getItem("transcriptor.model-onboarding.postponed") === "true"
+    ) return;
+    setShowModelSetup(true);
   }, []);
 
   useEffect(() => {
@@ -681,6 +692,21 @@ export default function App() {
     {showInsights && store.project && <InsightsDialog insights={store.project.insights ?? null} loading={insightsLoading} mode={insightMode} depth={insightDepth} progress={analysisProgress} analysisStartedAt={analysisStartedAt} aiStatus={localAiStatus} paragraphCount={store.project.segments.length} onModeChange={setInsightMode} onDepthChange={setInsightDepth} onAnalyze={analyzeTranscript} onCancelAnalysis={cancelAnalysis} onGroupParagraphs={groupIntoParagraphs} assistantAnswers={assistantAnswers} assistantLoading={assistantLoading} onAsk={(question) => void askTranscript(question)} onSeek={(milliseconds) => { seek(milliseconds); setShowInsights(false); }} onClose={() => setShowInsights(false)} />}
     {showLive && <LiveRecorderDialog settings={{ ...projectSettingsFromApp(store.settings), model: "turbo", qualityMode: "instant", hotwords: vocabularyPrompt("") }} audioSource={store.settings.liveAudioSource} onAudioSourceChange={(source) => store.setSettings({ liveAudioSource: source })} onLanguageChange={(language) => store.setSettings({ defaultLanguage: language })} onComplete={(result, refineAfterStop) => void completeLiveRecording(result, refineAfterStop)} onClose={() => setShowLive(false)} />}
     {showDiagnostics && <DiagnosticsDialog project={store.project} diagnostics={diagnostics} loading={diagnosticsLoading} onRun={() => void runDiagnostics()} onRelocate={() => void relocateProjectMedia()} onUseCandidate={(path) => void relocateProjectMedia(path)} onClose={() => setShowDiagnostics(false)} />}
+    {showModelSetup && <ModelSetupDialog
+      onComplete={({ qualityMode, speakerAiReady }) => {
+        store.setSettings({
+          qualityMode,
+          defaultModel: qualityMode === "maximum" ? "large-v3" : "turbo",
+          voiceProfilesEnabled: speakerAiReady,
+          diarizationMode: speakerAiReady ? "neural" : "adaptive",
+        });
+        setShowModelSetup(false);
+      }}
+      onLater={() => {
+        sessionStorage.setItem("transcriptor.model-onboarding.postponed", "true");
+        setShowModelSetup(false);
+      }}
+    />}
   </div>;
 }
 

@@ -37,6 +37,7 @@
     "externalBin": ["binaries/transcriptor-engine"],
     "resources": {
       "resources/cuda/": "cuda/",
+      "resources/licenses/": "licenses/runtime/",
       "../LICENSE": "licenses/Transcriptor-MIT.txt",
       "../docs/THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md"
     },
@@ -51,6 +52,7 @@
       },
       "nsis": {
         "displayLanguageSelector": true,
+        "languages": ["Spanish", "English"],
         "installerIcon": "icons/icon.ico",
         "installMode": "currentUser"
       }

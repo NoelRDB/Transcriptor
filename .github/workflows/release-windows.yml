@@ -20,21 +20,21 @@ jobs:
 
     steps:
       - name: Descargar el repositorio
-        uses: actions/checkout@v7
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
 
       - name: Preparar Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.3.0
         with:
           node-version: "22"
           cache: npm
 
       - name: Preparar Rust estable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: x86_64-pc-windows-msvc
 
       - name: Preparar caché de Rust
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
         with:
           workspaces: "./src-tauri -> target"
 
@@ -54,12 +54,11 @@ jobs:
       - name: Preparar FFmpeg redistribuible y verificado
         shell: pwsh
         env:
-          FFMPEG_ARCHIVE_URL: ${{ vars.FFMPEG_ARCHIVE_URL }}
-          FFMPEG_ARCHIVE_SHA256: ${{ vars.FFMPEG_ARCHIVE_SHA256 }}
+          # Una variable del repositorio puede sustituir esta compilación fijada,
+          # pero una instalación nueva del workflow funciona sin configuración oculta.
+          FFMPEG_ARCHIVE_URL: ${{ vars.FFMPEG_ARCHIVE_URL || 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-18-13-13/ffmpeg-N-125658-g0869e710e6-win64-lgpl.zip' }}
+          FFMPEG_ARCHIVE_SHA256: ${{ vars.FFMPEG_ARCHIVE_SHA256 || '0f585b6f171104b6cb033a6c4b14edaee13ba43121c954b46e211437c44a23fe' }}
         run: |
-          if (-not $env:FFMPEG_ARCHIVE_URL -or -not $env:FFMPEG_ARCHIVE_SHA256) {
-            throw "Configura FFMPEG_ARCHIVE_URL y FFMPEG_ARCHIVE_SHA256 en Variables de Actions."
-          }
           ./scripts/fetch-ffmpeg.ps1 `
             -Url $env:FFMPEG_ARCHIVE_URL `
             -Sha256 $env:FFMPEG_ARCHIVE_SHA256
@@ -72,10 +71,12 @@ jobs:
 
       - name: Construir el sidecar local
         shell: pwsh
-        run: ./scripts/build-sidecar.ps1 -TargetTriple x86_64-pc-windows-msvc
+        run: |
+          ./scripts/build-sidecar.ps1 -TargetTriple x86_64-pc-windows-msvc
+          ./scripts/verify-release.ps1 -RequireRuntimeAssets
 
-      - name: Construir y publicar instaladores
-        uses: tauri-apps/tauri-action@v1
+      - name: Construir instaladores y preparar borrador
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -88,8 +89,13 @@ jobs:
             El procesamiento es local: el instalador no contiene grabaciones,
             transcripciones, proyectos ni modelos de ningún usuario.
 
+            El instalador incorpora la aplicación, Python, FFmpeg/FFprobe,
+            WebView2 y el runtime CUDA necesario. En el primer uso, la propia
+            aplicación permite descargar con confirmación el modelo de IA
+            recomendado; no hace falta instalar herramientas de programación.
+
             Consulta `checksums-SHA256.txt` para verificar la descarga.
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: "--target x86_64-pc-windows-msvc"
 
@@ -101,4 +107,14 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" .\release\checksums-SHA256.txt --clobber
+        run: |
+          gh release upload "${{ github.ref_name }}" `
+            .\release\checksums-SHA256.txt `
+            .\release\THIRD_PARTY_NOTICES.md `
+            --clobber
+
+      - name: Publicar la versión verificada
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false

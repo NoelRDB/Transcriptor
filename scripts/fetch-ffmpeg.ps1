@@ -34,6 +34,19 @@ try {
     throw "No se puede confirmar que la compilación FFmpeg excluya x264/x265. Revisa el proveedor."
   }
 
+  $SourceManifest = @(
+    "Componente: FFmpeg/FFprobe",
+    "Archivo original: $ParsedUrl",
+    "SHA-256 del archivo: $($Sha256.ToLowerInvariant())",
+    "",
+    $VersionOutput
+  )
+  [System.IO.File]::WriteAllLines(
+    (Join-Path $ProjectRoot "sidecar\ffmpeg\BUILD-SOURCE.txt"),
+    $SourceManifest,
+    [System.Text.UTF8Encoding]::new($false)
+  )
+
   Write-Host "FFmpeg verificado y preparado para el instalador."
 }
 finally {

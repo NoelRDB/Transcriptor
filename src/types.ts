@@ -317,6 +317,12 @@ export interface ManagedModel {
   installed: boolean;
   installedBytes: number;
   paths: string[];
+  recommended?: boolean;
+  integrity?: "ready" | "partial" | "missing";
+  missingFiles?: string[];
+  downloadBytes?: number;
+  requiredFreeBytes?: number;
+  canInstall?: boolean;
 }
 
 export interface ModelCatalog {

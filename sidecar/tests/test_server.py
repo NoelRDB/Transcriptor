@@ -93,6 +93,33 @@ def test_automatic_queue_limits_work_to_safe_capacity(monkeypatch):
         )
 
 
+def test_model_manager_rejects_download_before_starting_when_disk_is_full(monkeypatch):
+    writer = CaptureWriter()
+    server = EngineServer(database=StubDatabase(), writer=writer)
+    monkeypatch.setattr(
+        server_module,
+        "list_models",
+        lambda: {
+            "freeBytes": 512 * 1024**2,
+            "models": [
+                {
+                    "id": "turbo",
+                    "name": "Turbo",
+                    "installed": False,
+                    "canInstall": False,
+                    "requiredFreeBytes": 2 * 1024**3,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(OSError, match="No hay espacio suficiente"):
+        server._start_model_download("download-1", "turbo")
+
+    assert server._model_downloads == {}
+    assert writer.messages == []
+
+
 def test_queue_fills_two_transcription_slots_in_parallel(monkeypatch):
     database = QueueDatabase()
     server = EngineServer(database=database, writer=StubWriter())

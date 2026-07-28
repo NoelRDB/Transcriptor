@@ -20,6 +20,7 @@ src-tauri/target/
 src-tauri/binaries/*.exe
 src-tauri/binaries/*-x86_64-*
 src-tauri/resources/cuda/*.dll
+src-tauri/resources/licenses/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal

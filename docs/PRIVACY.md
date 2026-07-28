@@ -11,7 +11,7 @@ Subir el código a GitHub no sube los datos creados con la aplicación. El repos
 Cada cuenta de Windows tiene un directorio privado e independiente:
 
 ```text
-%LOCALAPPDATA%\Transcriptor\
+%LOCALAPPDATA%\TranscriptorData\
 ├── transcriptor.sqlite3   proyectos y segmentos
 ├── recordings\            grabaciones creadas en directo
 ├── imports\               medios incorporados desde paquetes portables
@@ -32,13 +32,21 @@ La cuenta `Usuario A` no comparte estas rutas con `Usuario B`, y dos equipos dif
 
 Ni el medio ni su transcripción se envían en esas descargas.
 
+Los modelos son archivos de sólo lectura con pesos de inteligencia artificial.
+No contienen proyectos de otros usuarios de Transcriptor y descargarlos no
+sube grabaciones, texto ni perfiles de voz. Una vez instalados, la
+transcripción y la comparación de voces pueden ejecutarse sin conexión. La
+gestión se realiza desde
+**Ajustes → Modelos locales**, donde se muestra el tamaño, el progreso y la
+opción de eliminación.
+
 ## Exportaciones y paquetes
 
 TXT, subtítulos, JSON, DOCX, PDF y paquetes `.transcriptor` se escriben exclusivamente en la ubicación elegida por el usuario. Un paquete portable puede contener datos del proyecto por definición; sólo debe compartirse si el usuario decide exportarlo y enviarlo.
 
 ## Borrado y desinstalación
 
-La desinstalación elimina la aplicación, pero no borra proyectos personales en silencio. Para borrar datos hay que usar las opciones de limpieza de la aplicación o eliminar conscientemente `%LOCALAPPDATA%\Transcriptor`.
+La desinstalación elimina la aplicación, pero no borra proyectos personales en silencio. Para borrar datos hay que usar las opciones de limpieza de la aplicación o eliminar conscientemente `%LOCALAPPDATA%\TranscriptorData`. Las versiones de desarrollo anteriores pueden conservar sus datos en `%LOCALAPPDATA%\Transcriptor`.
 
 Los temporales controlados por la aplicación se limpian cuando dejan de ser necesarios. Un cierre inesperado puede dejar archivos recuperables que el diagnóstico local puede identificar.
 

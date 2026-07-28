@@ -65,14 +65,6 @@ export function LocalModelsSection() {
     }
   }
 
-  async function cancelDownload(modelId: string) {
-    try {
-      await engine.cancelModelDownload(modelId);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  }
-
   async function removeModel(modelId: string, name: string) {
     if (!window.confirm(`Se eliminará ${name} de este equipo. Podrás descargarlo de nuevo cuando lo necesites. ¿Continuar?`)) return;
     setBusy(modelId);
@@ -124,24 +116,27 @@ export function LocalModelsSection() {
         {catalog?.models.map((model) => {
           const downloading = busy === model.id && !model.installed;
           const modelProgress = progress[model.id];
+          const partial = model.integrity === "partial";
+          const canInstall = model.canInstall !== false;
           return (
             <article key={model.id} className={model.installed ? "installed" : ""}>
               <span className="settings-model-icon"><Box size={19} /></span>
               <div className="settings-model-copy">
-                <div><strong>{model.name}</strong><em>{model.installed ? <><CheckCircle2 size={11} /> Instalado</> : `${model.sizeGiB} GB`}</em></div>
+                <div><strong>{model.name}</strong><em>{model.installed ? <><CheckCircle2 size={11} /> Instalado</> : partial ? "Descarga incompleta" : `${model.sizeGiB} GB`}</em></div>
                 <p>{model.description}</p>
                 <small>{model.speed} · precisión {model.accuracy.toLowerCase()} · RAM recomendada {model.memoryGiB} GB</small>
+                {!model.installed && !canInstall ? <small className="model-space-warning">No hay espacio libre suficiente para completar este modelo.</small> : null}
                 {downloading && <div className="settings-model-progress"><progress max={100} value={modelProgress ?? undefined} /><span>{modelProgress == null ? "Preparando…" : `${modelProgress.toFixed(0)} %`}</span></div>}
               </div>
               <div className="settings-model-action">
                 {downloading ? (
-                  <button className="button secondary" onClick={() => void cancelDownload(model.id)}><X size={14} /> Cancelar</button>
+                  <button className="button secondary" disabled><LoaderCircle className="spin" size={14} /> Descargando…</button>
                 ) : model.installed ? (
                   <button className="icon-button danger-icon" disabled={busy === model.id} onClick={() => void removeModel(model.id, model.name)} aria-label={`Eliminar ${model.name}`} title="Eliminar modelo">
                     {busy === model.id ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
                   </button>
                 ) : (
-                  <button className="button secondary" disabled={busy !== null || !engine.available} onClick={() => void downloadModel(model.id, model.name, model.sizeGiB)}><Download size={14} /> Descargar</button>
+                  <button className="button secondary" disabled={busy !== null || !engine.available || !canInstall} onClick={() => void downloadModel(model.id, model.name, model.sizeGiB)}><Download size={14} /> {partial ? "Completar" : canInstall ? "Descargar" : "Sin espacio"}</button>
                 )}
               </div>
             </article>

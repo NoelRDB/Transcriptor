@@ -8,6 +8,7 @@
   **Reproduce · transcribe · identifica hablantes · comprende · edita · exporta**
 
   [![CI](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml/badge.svg)](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml)
+  [![Última versión](https://img.shields.io/github/v/release/NoelRDB/Transcriptor?display_name=tag&sort=semver&label=ultima%20version)](https://github.com/NoelRDB/Transcriptor/releases/latest)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows11&logoColor=white)](#instalación)
   [![Privacidad](https://img.shields.io/badge/privacidad-100%25%20local-cbff3d)](#privacidad-por-diseño)
   [![Tauri](https://img.shields.io/badge/Tauri-2.11-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
@@ -15,7 +16,15 @@
   [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
   [![Licencia MIT](https://img.shields.io/badge/licencia-MIT-f3f3f3)](LICENSE)
 
-  [Descargar](https://github.com/NoelRDB/Transcriptor/releases) ·
+  <br>
+
+  <a href="https://github.com/NoelRDB/Transcriptor/releases/latest">
+    <img src="https://img.shields.io/badge/Descargar_para_Windows-setup.exe-cbff3d?style=for-the-badge&logo=windows11&logoColor=111111" alt="Descargar Transcriptor para Windows">
+  </a>
+
+  <br>
+
+  [Guía de instalación](docs/INSTALLATION.md) ·
   [Ver funciones](#qué-hace) ·
   [Documentación](#documentación) ·
   [Compilar](#desarrollo) ·
@@ -27,7 +36,10 @@
 ![Demostración animada de Transcriptor](docs/assets/transcriptor-showcase.svg)
 
 > [!IMPORTANT]
-> Transcriptor está en desarrollo activo. Antes de una primera versión pública estable, consulta las [limitaciones conocidas](docs/LIMITATIONS.md). Si todavía no aparece un instalador en **Releases**, puedes ejecutarlo desde el código siguiendo la sección de desarrollo.
+> Para instalar Transcriptor no uses el botón verde **Code** ni descargues
+> `Source code.zip`: esos archivos son para programadores. Pulsa **Descargar para
+> Windows** y, dentro de `Assets`, elige el archivo que termina en
+> `_x64-setup.exe`.
 
 ## ¿Qué hace?
 
@@ -190,19 +202,36 @@ Tus archivos ──► tu ordenador ──► tus proyectos
 
 ## Instalación
 
-### Instalador de Windows
+### Windows 10 y 11
 
-Cuando exista una versión publicada:
+**[Descargar la última versión para Windows →](https://github.com/NoelRDB/Transcriptor/releases/latest)**
 
-1. Abre [GitHub Releases](https://github.com/NoelRDB/Transcriptor/releases).
-2. Descarga `Transcriptor_<versión>_x64-setup.exe`.
-3. Comprueba `checksums-SHA256.txt`.
-4. Ejecuta el instalador.
-5. Elige qué modelos quieres descargar en el primer uso.
+1. En la sección **Assets**, descarga `Transcriptor_<versión>_x64-setup.exe`.
+2. Abre el archivo descargado y sigue el asistente.
+3. Inicia Transcriptor desde el menú Inicio o el acceso directo.
+4. En la primera transcripción, confirma el modelo recomendado. La aplicación
+   muestra su tamaño y lo instala dentro de tu cuenta de Windows.
 
-El usuario final no necesita instalar Python, Node.js, Rust ni FFmpeg. También puede publicarse un `.msi` para despliegues administrados.
+El instalador ya incorpora la aplicación, el motor local de Python, FFmpeg,
+FFprobe, el instalador de WebView2 y las bibliotecas necesarias para usar CPU o
+una GPU NVIDIA compatible. **No hay que instalar Python, Node.js, Rust, CUDA ni
+escribir comandos.**
 
-Mientras no haya firma de código, Windows SmartScreen puede mostrar “editor desconocido”. Descarga exclusivamente desde este repositorio y compara el SHA-256.
+Los modelos de reconocimiento se descargan desde **Ajustes → Modelos locales**
+porque pueden ocupar varios gigabytes. Esta descarga forma parte de la
+configuración guiada de la aplicación, requiere confirmación y se realiza una
+sola vez. Después, la transcripción funciona localmente incluso sin conexión.
+
+> [!TIP]
+> El `.exe` es la descarga recomendada. El `.msi` está pensado para
+> administradores. `checksums-SHA256.txt` sirve para comprobar la descarga y
+> los archivos `Source code` no instalan la aplicación.
+
+Mientras no haya firma de código, Windows SmartScreen puede mostrar “editor
+desconocido”. Antes de continuar, comprueba que la dirección empieza por
+`https://github.com/NoelRDB/Transcriptor/`. La
+[guía para usuarios no técnicos](docs/INSTALLATION.md) explica cada pantalla y
+cómo verificar el instalador.
 
 ### Formatos admitidos
 
@@ -268,14 +297,16 @@ Los paquetes NSIS/MSI se generan en `src-tauri\target\release\bundle`; los artef
 
 | Contenido | Ubicación predeterminada en Windows |
 |---|---|
-| Proyectos y configuración | `%LOCALAPPDATA%\Transcriptor\transcriptor.sqlite3` |
-| Grabaciones | `%LOCALAPPDATA%\Transcriptor\recordings` |
-| Modelos Whisper/CAM++ | `%LOCALAPPDATA%\Transcriptor\models` |
+| Proyectos y configuración | `%LOCALAPPDATA%\TranscriptorData\transcriptor.sqlite3` |
+| Grabaciones | `%LOCALAPPDATA%\TranscriptorData\recordings` |
+| Modelos Whisper/CAM++ | `%LOCALAPPDATA%\TranscriptorData\models` |
 | Modelos Ollama | `%USERPROFILE%\.ollama\models` |
-| Paquetes importados | `%LOCALAPPDATA%\Transcriptor\imports` |
-| Logs técnicos | `%LOCALAPPDATA%\Transcriptor\logs` |
+| Paquetes importados | `%LOCALAPPDATA%\TranscriptorData\imports` |
+| Logs técnicos | `%LOCALAPPDATA%\TranscriptorData\logs` |
 
 Los archivos originales no se almacenan como binarios dentro de SQLite. El proyecto conserva su ruta y permite relocalizar el medio si se ha movido.
+Las instalaciones de desarrollo anteriores que ya contengan datos en
+`%LOCALAPPDATA%\Transcriptor` continúan utilizándolos sin moverlos.
 
 ## Arquitectura
 
@@ -309,7 +340,7 @@ La interfaz nunca espera de forma síncrona a la extracción o inferencia. La co
 - [x] Cola persistente y trabajos paralelos.
 - [x] Exportadores y paquetes portables.
 - [ ] Firma de código para Windows.
-- [ ] Primer instalador público estable.
+- [x] Primer instalador público para Windows.
 - [ ] Forma de onda interactiva.
 - [ ] Traducción local.
 - [ ] Soporte validado para macOS y Linux.
@@ -318,6 +349,7 @@ Consulta el [historial de cambios](CHANGELOG.md) y las [limitaciones conocidas](
 
 ## Documentación
 
+- [Instalación para usuarios de Windows](docs/INSTALLATION.md)
 - [Arquitectura](docs/ARCHITECTURE.md)
 - [Protocolo frontend–sidecar](docs/PROTOCOL.md)
 - [Separación de hablantes](docs/SPEAKER_DIARIZATION.md)
