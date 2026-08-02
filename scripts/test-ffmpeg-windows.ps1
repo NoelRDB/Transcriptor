@@ -39,6 +39,9 @@ function Read-MediaProbe {
 }
 
 $VersionOutput = (& $Ffmpeg -version 2>&1) -join "`n"
+# FFmpeg cita automáticamente los argumentos que contienen comas al mostrar
+# la configuración, aunque conserve exactamente los mismos valores.
+$NormalizedVersionOutput = $VersionOutput.Replace("'", "")
 foreach ($RequiredConfiguration in @(
   "--disable-autodetect",
   "--disable-network",
@@ -48,7 +51,7 @@ foreach ($RequiredConfiguration in @(
   "--enable-encoder=pcm_s16le,aac,mpeg4",
   "--enable-muxer=pcm_s16le,wav,mp4,mov"
 )) {
-  if ($VersionOutput.IndexOf(
+  if ($NormalizedVersionOutput.IndexOf(
       $RequiredConfiguration,
       [System.StringComparison]::Ordinal
     ) -lt 0) {
