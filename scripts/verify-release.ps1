@@ -557,6 +557,9 @@ if ($RequireRuntimeAssets) {
   }
 
   $FfmpegVersion = (& (Join-Path $ProjectRoot "sidecar\ffmpeg\ffmpeg.exe") -version 2>&1) -join "`n"
+  # FFmpeg cita automáticamente los argumentos que contienen comas al mostrar
+  # la configuración, aunque conserve exactamente los mismos valores.
+  $NormalizedFfmpegVersion = $FfmpegVersion.Replace("'", "")
   foreach ($RequiredFfmpegConfiguration in @(
     "--disable-autodetect",
     "--disable-network",
@@ -571,7 +574,7 @@ if ($RequireRuntimeAssets) {
     "--enable-muxer=pcm_s16le,wav,mp4,mov",
     "--enable-filter=trim,atrim,setpts,asetpts,concat,aresample,scale,format,aformat"
   )) {
-    if ($FfmpegVersion.IndexOf(
+    if ($NormalizedFfmpegVersion.IndexOf(
         $RequiredFfmpegConfiguration,
         [System.StringComparison]::Ordinal
       ) -lt 0) {
