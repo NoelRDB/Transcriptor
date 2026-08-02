@@ -10,6 +10,7 @@ interface SettingsDialogProps {
   settings: AppSettings;
   durationMs?: number;
   onChange: (settings: Partial<AppSettings>) => void;
+  onPrepareModels?: () => void;
   onClose: () => void;
 }
 
@@ -39,7 +40,13 @@ function threadsFor(profile: PerformanceProfile, settings: AppSettings, hardware
   return logical;
 }
 
-export function SettingsDialog({ settings, durationMs = 0, onChange, onClose }: SettingsDialogProps) {
+export function SettingsDialog({
+  settings,
+  durationMs = 0,
+  onChange,
+  onPrepareModels,
+  onClose,
+}: SettingsDialogProps) {
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [speakerAi, setSpeakerAi] = useState<SpeakerAiStatus | null>(null);
   const [speakerDownload, setSpeakerDownload] = useState<{ downloadedBytes: number; totalBytes: number; percent: number } | null>(null);
@@ -158,7 +165,7 @@ export function SettingsDialog({ settings, durationMs = 0, onChange, onClose }: 
           {hardware ? <div className="hardware-grid">
             <article><Cpu /><div><small>PROCESADOR</small><strong>{hardware.cpu.name}</strong><span>{hardware.cpu.physicalCores} núcleos · {hardware.cpu.logicalCores} hilos · uso actual {hardware.cpu.usagePercent.toFixed(0)} %</span></div></article>
             <article><MemoryStick /><div><small>MEMORIA</small><strong>{formatMemory(hardware.memory.totalMiB)} RAM</strong><span>{formatMemory(hardware.memory.availableMiB)} disponibles · {hardware.memory.usagePercent.toFixed(0)} % en uso</span></div></article>
-            <article className={!hardware.gpu ? "unavailable" : ""}><Microchip /><div><small>GRÁFICA</small><strong>{hardware.gpu?.name ?? "No se detectó una GPU NVIDIA"}</strong><span>{hardware.gpu ? `${formatMemory(hardware.gpu.totalVramMiB)} VRAM · ${hardware.cudaAvailable ? "CUDA disponible" : "CUDA no disponible"}` : "Se utilizará el procesador"}</span></div></article>
+            <article className={!hardware.gpu ? "unavailable" : ""}><Microchip /><div><small>GRÁFICA</small><strong>{hardware.gpu?.name ?? "No se detectó una GPU NVIDIA"}</strong><span>{hardware.gpu ? `${formatMemory(hardware.gpu.totalVramMiB)} VRAM · ${hardware.cudaAvailable ? "CUDA disponible" : "CUDA opcional no instalada"}` : "Se utilizará el procesador"}</span>{hardware.gpu && !hardware.cudaAvailable && onPrepareModels ? <button className="button secondary" onClick={onPrepareModels}><Download size={14} /> Preparar CUDA</button> : null}</div></article>
           </div> : <div className="hardware-loading">{hardwareError || "Detectando CPU, memoria y GPU…"}</div>}
         </section>
 
@@ -179,7 +186,6 @@ export function SettingsDialog({ settings, durationMs = 0, onChange, onClose }: 
             <label><span>Número de voces<small>Automático estima cuántas personas existen usando sus huellas vocales.</small></span><select value={settings.speakerCountMode} onChange={(event) => onChange({ speakerCountMode: event.target.value as AppSettings["speakerCountMode"] })}><option value="auto">Automático · recomendado</option><option value="exact">Exactamente</option></select></label>
             <label><span>{settings.speakerCountMode === "exact" ? "Número de hablantes" : "Máximo de hablantes"}<small>{settings.speakerCountMode === "exact" ? "Fuerza esa cantidad cuando la conoces de antemano." : "Evita crear más perfiles que personas esperadas."}</small></span><select value={settings.speakerCount} onChange={(event) => onChange({ speakerCount: Number(event.target.value) })}>{[1, 2, 3, 4, 5, 6, 7, 8].map((count) => <option key={count} value={count}>{count} hablante{count === 1 ? "" : "s"}</option>)}</select></label>
             <label className="speaker-sensitivity"><span>Sensibilidad al cambio de voz<small>Bájala si mezcla personas; súbela si divide demasiado a la misma persona.</small></span><div><input type="range" min={20} max={90} value={settings.speakerSensitivity} onChange={(event) => onChange({ speakerSensitivity: Number(event.target.value) })} /><output>{settings.speakerSensitivity}</output></div></label>
-            <label><span>Latencia en directo<small>Menos retardo usa bloques más pequeños y puede perder algo de contexto.</small></span><select value={settings.liveLatency} onChange={(event) => onChange({ liveLatency: event.target.value as AppSettings["liveLatency"] })}><option value="ultra">Ultrabaja · 0,6–1,1 s</option><option value="balanced">Equilibrada · 0,8–1,5 s</option><option value="stable">Estable · 1,1–2,2 s</option></select></label>
           </div>}
           <VoiceProfilesSection settings={settings} advanced={settings.experienceMode === "advanced"} onChange={onChange} />
         </section>

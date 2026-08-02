@@ -1,4 +1,5 @@
 import type {
+  CudaRuntimeStatus,
   HardwareInfo,
   ManagedModel,
   ModelCatalog,
@@ -17,6 +18,10 @@ export interface RecommendedModelSetup {
   freeBytes: number;
   canInstall: boolean;
   includesSpeakerAi: boolean;
+  includesCudaRuntime: boolean;
+  downloadBytes: number;
+  cudaRequiredBytes: number;
+  cudaFreeBytes: number;
   reason: string;
 }
 
@@ -30,7 +35,20 @@ export function buildRecommendedModelSetup(
   catalog: ModelCatalog,
   hardware: HardwareInfo | null,
   speakerAiReady: boolean,
+  cudaRuntime: CudaRuntimeStatus | null = null,
+  includeCudaRuntime = false,
 ): RecommendedModelSetup {
+  const includesCudaRuntime = Boolean(
+    includeCudaRuntime
+    && hardware?.gpu
+    && cudaRuntime?.supported
+    && !cudaRuntime.ready,
+  );
+  const cudaDownloadBytes = includesCudaRuntime ? cudaRuntime?.downloadBytes ?? 0 : 0;
+  const cudaRequiredBytes = includesCudaRuntime
+    ? cudaRuntime?.requiredFreeBytes ?? 0
+    : 0;
+  const cudaFreeBytes = cudaRuntime?.freeBytes ?? 0;
   const turbo = catalog.models.find((model) => model.id === "turbo");
   if (!turbo) {
     return {
@@ -41,6 +59,10 @@ export function buildRecommendedModelSetup(
       freeBytes: catalog.freeBytes,
       canInstall: false,
       includesSpeakerAi: false,
+      includesCudaRuntime,
+      downloadBytes: cudaDownloadBytes,
+      cudaRequiredBytes,
+      cudaFreeBytes,
       reason: "El catálogo local no contiene el modelo Turbo.",
     };
   }
@@ -48,26 +70,51 @@ export function buildRecommendedModelSetup(
   const large = catalog.models.find((model) => model.id === "large-v3");
   const speakerBytes = speakerAiReady ? 0 : SPEAKER_MODEL_BYTES;
   const professionalModels = large ? [turbo, large] : [turbo];
-  const professionalBytes = professionalModels.reduce(
-    (total, model) => total + bytesLeft(model),
-    speakerBytes,
-  );
-  const professionalRequired = professionalBytes
-    ? professionalBytes + DOWNLOAD_HEADROOM_BYTES
-    : 0;
+  const sameVolume = includesCudaRuntime
+    && Boolean(cudaRuntime)
+    && volumeOf(catalog.root) === volumeOf(cudaRuntime?.root ?? "");
+  const capacityFor = (selectedModels: ManagedModel[]) => {
+    const modelBytes = selectedModels.reduce(
+      (total, model) => total + bytesLeft(model),
+      speakerBytes,
+    );
+    const modelRequired = modelBytes ? modelBytes + DOWNLOAD_HEADROOM_BYTES : 0;
+    if (!includesCudaRuntime) {
+      return {
+        modelBytes,
+        requiredBytes: modelRequired,
+        canInstall: catalog.freeBytes >= modelRequired,
+      };
+    }
+    if (sameVolume) {
+      const combinedRequired = modelBytes + cudaDownloadBytes + DOWNLOAD_HEADROOM_BYTES;
+      return {
+        modelBytes,
+        requiredBytes: combinedRequired,
+        canInstall: catalog.freeBytes >= combinedRequired,
+      };
+    }
+    return {
+      modelBytes,
+      requiredBytes: modelRequired + cudaRequiredBytes,
+      canInstall: catalog.freeBytes >= modelRequired && Boolean(cudaRuntime?.canInstall),
+    };
+  };
+  const professionalCapacity = capacityFor(professionalModels);
   const enoughMemory = Boolean(hardware && hardware.memory.totalMiB >= 8 * 1024);
   const professional = Boolean(
     large
     && enoughMemory
-    && catalog.freeBytes >= professionalRequired,
+    && professionalCapacity.canInstall,
   );
   const models = professional ? professionalModels : [turbo];
-  const downloadBytes = models.reduce(
-    (total, model) => total + bytesLeft(model),
-    speakerBytes,
-  );
-  const requiredBytes = downloadBytes ? downloadBytes + DOWNLOAD_HEADROOM_BYTES : 0;
-  const canInstall = models.length > 0 && catalog.freeBytes >= requiredBytes;
+  const capacity = professional ? professionalCapacity : capacityFor(models);
+  const downloadBytes = capacity.modelBytes + cudaDownloadBytes;
+  const requiredBytes = capacity.requiredBytes;
+  const canInstall = models.length > 0 && capacity.canInstall;
+  const gpuReason = includesCudaRuntime
+    ? " También prepararemos CUDA para aprovechar automáticamente tu GPU NVIDIA."
+    : "";
 
   return {
     models,
@@ -77,14 +124,24 @@ export function buildRecommendedModelSetup(
     freeBytes: catalog.freeBytes,
     canInstall,
     includesSpeakerAi: !speakerAiReady,
+    includesCudaRuntime,
+    downloadBytes,
+    cudaRequiredBytes,
+    cudaFreeBytes,
     reason: professional
-      ? "Tu equipo puede usar Turbo para la primera pasada y Large-v3 para revisar automáticamente los fragmentos dudosos."
+      ? `Tu equipo puede usar Turbo para la primera pasada y Large-v3 para revisar automáticamente los fragmentos dudosos.${gpuReason}`
       : enoughMemory
-        ? "Instalaremos Turbo para empezar sin ocupar más espacio del necesario."
+        ? `Instalaremos Turbo para empezar sin ocupar más espacio del necesario.${gpuReason}`
         : hardware
-          ? "Turbo ofrece el mejor equilibrio compatible con la memoria disponible."
+          ? `Turbo ofrece el mejor equilibrio compatible con la memoria disponible.${gpuReason}`
           : "No se pudo medir la memoria; usamos la opción conservadora para empezar con seguridad.",
   };
+}
+
+function volumeOf(path: string): string {
+  const windowsDrive = /^[a-z]:/i.exec(path);
+  if (windowsDrive) return windowsDrive[0].toLowerCase();
+  return path.startsWith("/") ? "/" : "";
 }
 
 export function hasReadyCoreModel(catalog: ModelCatalog): boolean {

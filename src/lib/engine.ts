@@ -1,4 +1,4 @@
-import type { AssistantMessage, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, InsightDepth, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison, VoiceProfileMergeResult } from "../types";
+import type { AssistantMessage, CudaRuntimeStatus, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, InsightDepth, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RecordingChunkResult, RecordingSessionResult, RecordingSessionStarted, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison, VoiceProfileMergeResult } from "../types";
 
 type EventListener = (event: EngineEvent) => void;
 type PendingRequest = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: number };
@@ -96,6 +96,9 @@ class EngineClient {
 
   analyze(mediaPath: string) { return this.request<Record<string, unknown>>("analyze_media", { mediaPath }, 60_000); }
   getHardwareInfo() { return this.request<HardwareInfo>("get_hardware_info", {}, 60_000); }
+  getCudaRuntimeStatus() { return this.request<CudaRuntimeStatus>("get_cuda_runtime_status", {}, 60_000); }
+  installCudaRuntime() { return this.request<{ accepted: boolean }>("install_cuda_runtime"); }
+  cancelCudaRuntimeDownload() { return this.request<{ cancelled: boolean }>("cancel_cuda_runtime_download"); }
   diagnose(mediaPath?: string) { return this.request<SystemDiagnostics>("diagnose_system", { mediaPath }, 120_000); }
   listModels() { return this.request<ModelCatalog>("list_models"); }
   downloadModel(modelId: string) { return this.request<{ accepted: boolean }>("download_model", { modelId }); }
@@ -183,6 +186,19 @@ class EngineClient {
   }
   cancelLiveSession(sessionId: string) {
     return this.request<{ cancelled: boolean }>("cancel_live_session", { sessionId });
+  }
+
+  startRecordingSession(language: string) {
+    return this.request<RecordingSessionStarted>("start_recording_session", { language });
+  }
+  pushRecordingAudio(sessionId: string, pcmBase64: string, chunkId: number) {
+    return this.request<RecordingChunkResult>("push_recording_audio", { sessionId, pcmBase64, chunkId }, 30_000);
+  }
+  stopRecordingSession(sessionId: string) {
+    return this.request<RecordingSessionResult>("stop_recording_session", { sessionId }, 60_000);
+  }
+  cancelRecordingSession(sessionId: string) {
+    return this.request<{ cancelled: boolean }>("cancel_recording_session", { sessionId });
   }
 }
 

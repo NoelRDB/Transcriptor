@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import ctypes
+import contextlib
 import fnmatch
 import gc
 import math
@@ -8,6 +8,7 @@ import os
 import sys
 import threading
 import time
+import types
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -15,14 +16,30 @@ from pathlib import Path
 from typing import Any
 
 from .audio import AudioDecodeCancelled, decode_audio_with_progress, enhance_speech_audio
+from .cuda_runtime import CudaRuntimeError, preload_cuda_backend
 from .diarization import assign_speakers
 from .hardware import RuntimeMonitor
 from .paragraphs import group_segments
 from .paths import models_dir
 from .unicode_text import sanitize_text
 
+
+def _install_faster_whisper_av_stub() -> None:
+    """Satisfy faster-whisper's decoder import without redistributing PyAV.
+
+    Transcriptor always passes a decoded NumPy array to faster-whisper, so its
+    PyAV-based ``decode_audio`` helper is never invoked.
+    """
+    if "av" in sys.modules:
+        return
+    stub = types.ModuleType("av")
+    stub.__dict__["__transcriptor_stub__"] = True
+    sys.modules["av"] = stub
+
+
+_install_faster_whisper_av_stub()
+
 Emit = Callable[[str, dict[str, Any]], None]
-_DLL_DIRECTORY_HANDLES: list[Any] = []
 
 _PHASE_PROGRESS_RANGES: dict[str, tuple[float, float]] = {
     "decoding": (0.0, 10.0),
@@ -44,35 +61,15 @@ def global_progress(stage: str, phase_percent: float | None) -> float:
     return round(start + (end - start) * bounded / 100, 2)
 
 
-def _configure_cuda_library_paths() -> None:
-    if sys.platform != "win32" or _DLL_DIRECTORY_HANDLES:
-        return
-    roots = [
-        Path(os.environ["TRANSCRIPTOR_CUDA_DIR"])
-        if os.environ.get("TRANSCRIPTOR_CUDA_DIR")
-        else Path("__cuda_dir_not_configured__"),
-        Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)),
-        Path(sys.executable).resolve().parent,
-        Path(sys.prefix) / "Lib" / "site-packages",
-    ]
-    directories: list[Path] = []
-    for root in roots:
-        if root.name in {"cuda", "bin"}:
-            directories.append(root)
-        directories.extend(
-            [
-                root / "nvidia" / "cublas" / "bin",
-                root / "nvidia" / "cudnn" / "bin",
-                root / "nvidia" / "cuda_runtime" / "bin",
-                root / "nvidia" / "cuda_nvrtc" / "bin",
-            ]
-        )
-    for directory in directories:
-        if not directory.is_dir():
-            continue
-        os.environ["PATH"] = f"{directory}{os.pathsep}{os.environ.get('PATH', '')}"
-        if hasattr(os, "add_dll_directory"):
-            _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(str(directory)))
+def _preload_optional_gpu_before_engine_imports() -> None:
+    """Bind the optional GPU DLL before faster-whisper imports CTranslate2."""
+    with contextlib.suppress(CudaRuntimeError):
+        preload_cuda_backend()
+        # The detailed error is surfaced when the user actually requests GPU.
+        # CPU remains the bundled OSS backend and never depends on these DLLs.
+
+
+_preload_optional_gpu_before_engine_imports()
 
 
 @dataclass(frozen=True)
@@ -147,16 +144,13 @@ class Transcriber:
     @staticmethod
     def _cuda_runtime_available() -> bool:
         try:
-            _configure_cuda_library_paths()
+            activation = preload_cuda_backend()
+            if not activation.get("activated"):
+                return False
             import ctranslate2
 
-            if ctranslate2.get_cuda_device_count() < 1:
-                return False
-            if sys.platform == "win32":
-                for library in ("cublas64_12.dll", "cublasLt64_12.dll", "cudnn64_9.dll"):
-                    ctypes.WinDLL(library)
-            return True
-        except (ImportError, OSError, RuntimeError):
+            return ctranslate2.get_cuda_device_count() >= 1
+        except (CudaRuntimeError, ImportError, OSError, RuntimeError):
             return False
 
     def _select_device(self, requested_device: str, emit: Emit) -> str:
@@ -167,8 +161,15 @@ class Transcriber:
         emit(
             "engine_log",
             {
-                "level": "warning",
-                "message": "CUDA no está disponible o le faltan cuBLAS/cuDNN; se continuará por CPU.",
+                # Automatic mode is expected to choose the safest available
+                # backend. Only an explicit CUDA request needs user attention.
+                "level": "warning" if requested_device == "cuda" else "info",
+                "message": (
+                    "Modo CPU activo: CUDA no pudo iniciarse en esta sesión. "
+                    "La transcripción continúa con normalidad y conserva la misma "
+                    "calidad, aunque puede tardar más. Puedes revisar la GPU después "
+                    "en Ajustes."
+                ),
             },
         )
         return "cpu"

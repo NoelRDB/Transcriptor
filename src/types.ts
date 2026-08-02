@@ -182,6 +182,48 @@ export interface SpeakerAiStatus {
   notice: string;
 }
 
+export interface CudaRuntimeStatus {
+  id: "cuda-runtime";
+  supported: boolean;
+  installed: boolean;
+  ready: boolean;
+  usable?: boolean;
+  restartRequired?: boolean;
+  activationState?: "not-installed" | "corrupt" | "ready" | "active" | "restart-required" | "failed";
+  activationError?: string | null;
+  backend?: "gpu-optional-proprietary";
+  trust?: "sha256-verified-runtime-download";
+  signPathCovered?: false;
+  cpuBackend?: {
+    backend: "cpu-bundled-oss";
+    openSource: true;
+    signPathCovered: true;
+  };
+  source: "managed" | "bundled-legacy" | "legacy" | "development" | "missing";
+  root: string;
+  downloadBytes: number;
+  requiredFreeBytes: number;
+  freeBytes: number;
+  canInstall: boolean;
+  missingFiles: string[];
+  packages: Array<{
+    name: string;
+    version: string;
+    sizeBytes: number;
+    sha256: string;
+  }>;
+  legalDocuments?: Array<{
+    name: string;
+    version: string;
+    filename: string;
+    sizeBytes: number;
+    sha256: string;
+    url: string;
+    sourceSizeBytes?: number;
+    sourceSha256?: string;
+  }>;
+}
+
 export interface VoiceProfile {
   id: string;
   name: string;
@@ -447,6 +489,26 @@ export interface LiveChunkResult {
   speakerCount: number;
   speakerBackend?: string;
   latencyMs: number;
+}
+
+export interface RecordingSessionStarted {
+  sessionId: string;
+  sampleRate: number;
+  createdAt: string;
+}
+
+export interface RecordingChunkResult {
+  sessionId: string;
+  durationMs: number;
+  duplicate: boolean;
+}
+
+export interface RecordingSessionResult {
+  sessionId: string;
+  mediaPath: string;
+  durationMs: number;
+  language: string;
+  createdAt: string;
 }
 
 export interface DeletedProjectResult {

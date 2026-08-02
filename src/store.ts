@@ -23,6 +23,7 @@ interface AppState {
   isPlaying: boolean;
   isDirty: boolean;
   error: string | null;
+  notice: string | null;
   history: HistoryEntry[];
   future: HistoryEntry[];
   setProject: (project: TranscriptionProject | null) => void;
@@ -43,6 +44,7 @@ interface AppState {
   mergeWithNext: (id: string) => void;
   markSaved: () => void;
   setError: (error: string | null) => void;
+  setNotice: (notice: string | null) => void;
   undo: () => void;
   redo: () => void;
 }
@@ -59,6 +61,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   isPlaying: false,
   isDirty: false,
   error: null,
+  notice: null,
   history: [],
   future: [],
   setProject: (project) => set({ project, currentTimeMs: project?.lastPlaybackPositionMs ?? 0, progress: project ? { ...initialProgress, state: project.transcriptionStatus } : initialProgress, isDirty: false, history: [], future: [], error: null }),
@@ -266,6 +269,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
   markSaved: () => set({ isDirty: false }),
   setError: (error) => set({ error }),
+  setNotice: (notice) => set({ notice }),
   undo: () => {
     const state = get();
     const action = state.history.at(-1);

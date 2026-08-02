@@ -120,6 +120,99 @@ def test_model_manager_rejects_download_before_starting_when_disk_is_full(monkey
     assert writer.messages == []
 
 
+def test_cuda_runtime_status_is_available_through_the_typed_protocol(monkeypatch):
+    status = {
+        "id": "cuda-runtime",
+        "supported": True,
+        "ready": False,
+        "downloadBytes": 1_285_431_644,
+    }
+    monkeypatch.setattr(server_module, "get_cuda_runtime_status", lambda: status)
+    writer = CaptureWriter()
+    server = EngineServer(database=StubDatabase(), writer=writer)
+    monkeypatch.setattr(server.transcriber, "_cuda_runtime_available", lambda: False)
+
+    server.handle(
+        {
+            "requestId": "cuda-status",
+            "action": "get_cuda_runtime_status",
+            "payload": {},
+        }
+    )
+
+    assert status["usable"] is False
+    assert ("result", "cuda-status", status) in writer.messages
+
+
+def test_recording_protocol_starts_without_loading_the_transcription_model(monkeypatch):
+    writer = CaptureWriter()
+    server = EngineServer(database=StubDatabase(), writer=writer)
+    start = {
+        "sessionId": "recording-1",
+        "sampleRate": 16_000,
+        "createdAt": "2026-08-02T12:00:00+00:00",
+    }
+    monkeypatch.setattr(server.recorder, "start", lambda language: start | {"languageForTest": language})
+    monkeypatch.setattr(
+        server.transcriber,
+        "_load_model",
+        lambda *_args, **_kwargs: pytest.fail("La grabadora no debe cargar Whisper"),
+    )
+
+    server.handle(
+        {
+            "requestId": "recording-start",
+            "action": "start_recording_session",
+            "payload": {"language": "es"},
+        }
+    )
+
+    assert ("result", "recording-start", start | {"languageForTest": "es"}) in writer.messages
+
+
+def test_cuda_runtime_manager_streams_progress_and_reports_activation(monkeypatch):
+    writer = CaptureWriter()
+    server = EngineServer(database=StubDatabase(), writer=writer)
+
+    def install(emit, _cancelled):
+        emit(
+            {
+                "phase": "downloading",
+                "percent": 45,
+                "downloadedBytes": 500,
+                "totalBytes": 1_000,
+            }
+        )
+        return {"id": "cuda-runtime", "ready": True, "source": "managed"}
+
+    monkeypatch.setattr(server_module, "install_cuda_runtime", install)
+    monkeypatch.setattr(
+        server_module,
+        "preload_cuda_backend",
+        lambda: {
+            "activated": True,
+            "restartRequired": False,
+            "activationState": "active",
+        },
+    )
+    monkeypatch.setattr(server.transcriber, "_cuda_runtime_available", lambda: True)
+
+    server._run_cuda_runtime_download(threading.Event())
+
+    assert any(
+        message_type == "cuda_runtime_progress"
+        and payload["percent"] == 45
+        and payload["runtimeId"] == "cuda-runtime"
+        for message_type, _request_id, payload in writer.messages
+    )
+    assert any(
+        message_type == "cuda_runtime_completed"
+        and payload["ready"] is True
+        and payload["usable"] is True
+        for message_type, _request_id, payload in writer.messages
+    )
+
+
 def test_queue_fills_two_transcription_slots_in_parallel(monkeypatch):
     database = QueueDatabase()
     server = EngineServer(database=database, writer=StubWriter())

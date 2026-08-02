@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "distributions": [
+    { "name": "anyio", "version": "4.14.2" },
+    { "name": "certifi", "version": "2026.6.17" },
+    { "name": "charset-normalizer", "version": "3.4.9" },
+    { "name": "click", "version": "8.4.2" },
+    { "name": "colorama", "version": "0.4.6" },
+    {
+      "name": "ctranslate2",
+      "version": "4.8.1",
+      "repositoryFiles": [
+        {
+          "source": "docs/licenses/CTranslate2-4.8.1-LICENSE.txt",
+          "target": "LICENSE.txt",
+          "sha256": "54aa79d9fe3c09e67a16dcd95b9e88676405a6ec174efda31036983cf7672ecb"
+        }
+      ]
+    },
+    { "name": "faster-whisper", "version": "1.2.1" },
+    { "name": "filelock", "version": "3.31.0" },
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "repositoryFiles": [
+        {
+          "source": "docs/licenses/FlatBuffers-25.12.19-LICENSE.txt",
+          "target": "LICENSE.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    { "name": "fsspec", "version": "2026.6.0" },
+    { "name": "h11", "version": "0.16.0" },
+    { "name": "hf-xet", "version": "1.5.2" },
+    { "name": "httpcore", "version": "1.0.9" },
+    { "name": "httpx", "version": "0.28.1" },
+    { "name": "huggingface-hub", "version": "1.24.0" },
+    { "name": "idna", "version": "3.18" },
+    { "name": "kaldi-native-fbank", "version": "1.22.3" },
+    { "name": "lxml", "version": "6.1.1" },
+    { "name": "numpy", "version": "2.5.1" },
+    {
+      "name": "onnxruntime",
+      "version": "1.27.0",
+      "packageFiles": [
+        {
+          "source": "onnxruntime/LICENSE",
+          "target": "LICENSE.txt",
+          "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+        },
+        {
+          "source": "onnxruntime/ThirdPartyNotices.txt",
+          "target": "ThirdPartyNotices.txt",
+          "sha256": "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866"
+        }
+      ]
+    },
+    { "name": "packaging", "version": "26.2" },
+    { "name": "pillow", "version": "12.3.0" },
+    { "name": "protobuf", "version": "7.35.1" },
+    { "name": "psutil", "version": "7.2.2" },
+    { "name": "python-docx", "version": "1.2.0" },
+    { "name": "pyyaml", "version": "6.0.3" },
+    { "name": "reportlab", "version": "5.0.0" },
+    { "name": "setuptools", "version": "83.0.0" },
+    {
+      "name": "tokenizers",
+      "version": "0.23.1",
+      "repositoryFiles": [
+        {
+          "source": "docs/licenses/Tokenizers-0.23.1-LICENSE.txt",
+          "target": "LICENSE.txt",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    { "name": "tqdm", "version": "4.69.0" },
+    { "name": "typing-extensions", "version": "4.16.0" }
+  ],
+  "excludedDistributions": [
+    "av",
+    "pytest",
+    "ruff",
+    "pyinstaller-hooks-contrib",
+    "altgraph",
+    "iniconfig",
+    "pefile",
+    "pluggy",
+    "pygments",
+    "pywin32-ctypes"
+  ],
+  "bootstrapComponents": [
+    {
+      "name": "PyInstaller",
+      "version": "6.21.0",
+      "distribution": "pyinstaller",
+      "requiredFiles": [
+        "licenses/COPYING.txt"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+# Ejemplo documental: SignPath gestiona esta politica desde su portal.
+# Este archivo no contiene credenciales y no se importa automaticamente.
+kind: SignPathSigningPolicyExample
+version: 1
+
+project:
+  slugVariable: SIGNPATH_PROJECT_SLUG
+  artifactConfigurationSlugVariable: SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+
+policy:
+  slugVariable: SIGNPATH_SIGNING_POLICY_SLUG
+  purpose: release
+  expectedPublisher: SignPath Foundation
+  artifactConfiguration: .signpath/artifact-configuration.xml
+  hashAlgorithm: SHA256
+  requireTrustedTimestamp: true
+  requireTrustedBuildSystem: true
+  trustedBuildSystem: GitHub.com
+  allowedRepository: NoelRDB/Transcriptor
+  allowedRefPattern: refs/tags/v*
+  requiredParameters:
+    - version
+
+github:
+  protectedEnvironment: production-signing
+  organizationIdVariable: SIGNPATH_ORGANIZATION_ID
+  projectSlugVariable: SIGNPATH_PROJECT_SLUG
+  signingPolicySlugVariable: SIGNPATH_SIGNING_POLICY_SLUG
+  artifactConfigurationSlugVariable: SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+  apiTokenSecret: SIGNPATH_API_TOKEN
+
+scope:
+  sign:
+    - "*-setup.exe"
+    - "*.msi"
+  doNotResign:
+    - "FFmpeg y FFprobe"
+    - "DLL de NVIDIA u otros proveedores"
+    - "payload interno del instalador NSIS"

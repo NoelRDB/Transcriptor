@@ -85,14 +85,14 @@ describe("centro de rendimiento", () => {
     }));
   });
 
-  it("muestra sólo los cuatro controles avanzados de voces y ningún nombre posicional", async () => {
+  it("muestra sólo los controles avanzados útiles de voces y ningún ajuste de la antigua transcripción en directo", async () => {
     render(<SettingsDialog settings={{ ...DEFAULT_SETTINGS, experienceMode: "advanced" }} onChange={() => undefined} onClose={() => undefined} />);
 
     await waitFor(() => expect(screen.getByText("AMD Ryzen de prueba")).toBeTruthy());
     expect(screen.getByText("Número de voces")).toBeTruthy();
     expect(screen.getByText("Máximo de hablantes")).toBeTruthy();
     expect(screen.getByText("Sensibilidad al cambio de voz")).toBeTruthy();
-    expect(screen.getByText("Latencia en directo")).toBeTruthy();
+    expect(screen.queryByText("Latencia en directo")).toBeNull();
     expect(screen.queryByText("Nombre de la primera voz")).toBeNull();
     expect(screen.queryByText("Nombre de la segunda voz")).toBeNull();
   });

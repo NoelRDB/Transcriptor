@@ -21,7 +21,7 @@ foreach ($Command in @("npm", "uv", "rustc", "cargo")) {
 $Ffmpeg = Join-Path $ProjectRoot "sidecar\ffmpeg\ffmpeg.exe"
 $Ffprobe = Join-Path $ProjectRoot "sidecar\ffmpeg\ffprobe.exe"
 if (-not (Test-Path -LiteralPath $Ffmpeg) -or -not (Test-Path -LiteralPath $Ffprobe)) {
-  throw "Faltan FFmpeg/FFprobe redistribuibles. Ejecuta scripts/stage-ffmpeg.ps1 con una compilación LGPL compatible."
+  throw "Faltan FFmpeg/FFprobe. Construye el runtime LGPL fijado y prepara ffmpeg-runtime-windows-x64.zip con scripts/stage-ffmpeg.ps1."
 }
 
 Push-Location $ProjectRoot

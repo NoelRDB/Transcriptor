@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Info, X } from "lucide-react";
 import { engine, localMediaUrl } from "./lib/engine";
 import { routeEngineEvent } from "./lib/engineEvents";
 import { displayName, mediaKind, MEDIA_FILTERS, safeBaseName } from "./lib/media";
 import { downloadText, exportProject, type ExportFormat, type TextExportFormat } from "./lib/exporters";
 import { useAppStore } from "./store";
-import { DEFAULT_PROJECT_SETTINGS, type AnalysisProgress, type AppSettings, type AssistantAnswer, type AssistantMessage, type InsightDepth, type LiveSessionResult, type LocalAiStatus, type ProjectInsights, type QualityMode, type SystemDiagnostics, type TranscriptionProject } from "./types";
+import { DEFAULT_PROJECT_SETTINGS, type AnalysisProgress, type AppSettings, type AssistantAnswer, type AssistantMessage, type InsightDepth, type LocalAiStatus, type ProjectInsights, type QualityMode, type RecordingSessionResult, type SystemDiagnostics, type TranscriptionProject } from "./types";
 import { Toolbar } from "./components/Toolbar";
 import { Welcome } from "./components/Welcome";
 import { MediaPlayer } from "./components/MediaPlayer";
@@ -44,6 +44,12 @@ export default function App() {
   const [transcriptFocus, setTranscriptFocus] = useState(false);
   const dragging = useRef(false);
   const activeProjectId = store.project?.id;
+
+  useEffect(() => {
+    if (!store.notice) return;
+    const timer = window.setTimeout(() => useAppStore.getState().setNotice(null), 9_000);
+    return () => window.clearTimeout(timer);
+  }, [store.notice]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = store.settings.theme;
@@ -261,10 +267,28 @@ export default function App() {
   useEffect(() => {
     if (
       !engine.available
-      || localStorage.getItem("transcriptor.model-onboarding.v1") === "completed"
       || sessionStorage.getItem("transcriptor.model-onboarding.postponed") === "true"
     ) return;
-    setShowModelSetup(true);
+    if (localStorage.getItem("transcriptor.model-onboarding.v1") !== "completed") {
+      setShowModelSetup(true);
+      return;
+    }
+    let active = true;
+    Promise.all([
+      engine.getHardwareInfo(),
+      engine.getCudaRuntimeStatus(),
+    ]).then(([hardware, runtime]) => {
+      if (
+        active
+        && hardware.gpu
+        && runtime.supported
+        && !runtime.ready
+        && localStorage.getItem("transcriptor.cuda-runtime-prompt.v1") !== "dismissed"
+      ) {
+        setShowModelSetup(true);
+      }
+    }).catch(() => undefined);
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -523,11 +547,6 @@ export default function App() {
   async function openLiveRecorder() {
     if (!engine.available) return store.setError("La grabación en directo requiere la aplicación de escritorio.");
     if (["analyzing", "waiting_model", "transcribing"].includes(store.progress.state)) return;
-    if (!localStorage.getItem("transcriptor.model-consent.turbo")) {
-      const accepted = window.confirm("La grabación en directo utiliza el modelo Turbo local. Si no está instalado, se descargará una sola vez y permanecerá en este equipo. ¿Continuar?");
-      if (!accepted) return;
-      localStorage.setItem("transcriptor.model-consent.turbo", "accepted");
-    }
     if (store.project && store.isDirty) {
       try { await engine.save(store.project); store.markSaved(); }
       catch (error) { return store.setError(error instanceof Error ? error.message : String(error)); }
@@ -535,64 +554,60 @@ export default function App() {
     setShowLive(true);
   }
 
-  async function completeLiveRecording(result: LiveSessionResult, refineAfterStop: boolean) {
+  async function completeLiveRecording(result: RecordingSessionResult) {
     const now = new Date().toISOString();
+    const language = result.language || store.settings.defaultLanguage;
     const project: TranscriptionProject = {
-      // The live engine learns voice evidence under the session id. Reusing it
-      // as the project id keeps profile history and the saved conversation linked.
       id: result.sessionId,
       name: displayName(result.mediaPath),
       mediaPath: result.mediaPath,
       mediaUrl: await localMediaUrl(result.mediaPath),
       mediaType: "audio",
       durationMs: result.durationMs,
-      language: result.language || store.settings.defaultLanguage,
-      detectedLanguage: result.language || store.settings.defaultLanguage,
-      model: result.model,
-      createdAt: result.createdAt || now,
+      language,
+      model: store.settings.defaultModel,
+      createdAt: result.createdAt,
       updatedAt: now,
-      transcriptionStatus: "completed",
+      transcriptionStatus: "idle",
       lastPlaybackPositionMs: 0,
       settings: {
-        ...DEFAULT_PROJECT_SETTINGS,
-        language: result.language || store.settings.defaultLanguage,
-        model: "turbo",
-        device: store.settings.device,
-        performanceProfile: store.settings.performanceProfile,
-        cpuThreads: store.settings.cpuThreads,
-        processPriority: store.settings.processPriority,
-        qualityMode: "instant",
-        audioEnhancement: store.settings.audioEnhancement,
-        diarizationMode: store.settings.diarizationMode,
-        hotwords: vocabularyPrompt(""),
+        ...projectSettingsFromApp(store.settings),
+        language,
       },
-      segments: result.segments,
+      segments: [],
       insights: null,
     };
     try {
       await engine.save(project);
-      if (project.settings.voiceProfilesEnabled) {
-        const catalog = await engine.listVoiceProfiles();
-        store.setVoiceProfiles(catalog.profiles);
-      }
-      await Promise.all((result.markers ?? []).map((marker) => engine.addMarker(project.id, marker.timeMs, marker.kind, marker.label)));
       store.setProject(project);
       store.setRecentProjects(await engine.listProjects());
       store.setProgress({
-        state: "completed",
-        stage: "completed",
-        phase: "Grabación transcrita",
-        processedDurationMs: result.durationMs,
+        state: "idle",
+        phase: "Grabación lista",
+        processedDurationMs: 0,
         totalDurationMs: result.durationMs,
-        percent: 100,
-        message: result.voiceLearningWarning
-          ? "Grabación guardada; la memoria de voces no se actualizó esta vez"
-          : `${result.speakerCount || 1} voz${result.speakerCount === 1 ? "" : "es"} detectada${result.speakerCount === 1 ? "" : "s"}`,
+        percent: null,
+        message: "Audio guardado. Pulsa Transcribir para generar el texto y reconocer las voces.",
       });
       setShowLive(false);
-      if (refineAfterStop) await transcribe(project, "professional");
     } catch (error) {
       store.setError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function renameCurrentProject(name: string) {
+    const current = useAppStore.getState().project;
+    const nextName = name.trim();
+    if (!current || !nextName || nextName === current.name) return;
+    const updated = { ...current, name: nextName, updatedAt: new Date().toISOString() };
+    try {
+      await engine.save(updated);
+      useAppStore.getState().setProject(updated);
+      useAppStore.getState().setRecentProjects(await engine.listProjects());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useAppStore.getState().setError(message);
+      throw error;
     }
   }
 
@@ -678,8 +693,9 @@ export default function App() {
   }
 
   return <div className={`app-shell ${store.error ? "has-error" : ""}`}>
-    <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(store.project?.insights?.mode ?? "general"); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onOperations={() => store.setProject(null)} onShowProjects={() => store.setProject(null)} />
+    <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(store.project?.insights?.mode ?? "general"); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onRenameProject={renameCurrentProject} onShowProjects={() => store.setProject(null)} />
     {store.error && <div className="error-banner" role="alert"><AlertTriangle size={18} /><span>{store.error}</span><button onClick={() => store.setError(null)} aria-label="Cerrar"><X size={17} /></button></div>}
+    {store.notice && !store.error && <div className="notice-banner" role="status"><Info size={18} /><span>{store.notice}</span><button onClick={() => store.setNotice(null)} aria-label="Cerrar aviso"><X size={17} /></button></div>}
     {!store.project ? <Welcome recent={store.recentProjects} onOpen={() => engine.available ? openMedia() : document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} onOpenRecent={openRecent} onDeleteRecent={deleteRecent} onDropPath={openMedia} onImportFiles={queueMediaFiles} /> :
       <main className={`workspace ${transcriptFocus ? "transcript-focus" : ""}`} style={transcriptFocus ? undefined : { gridTemplateColumns: `${split}% 7px 1fr` }} onPointerMove={(event) => { if (!dragging.current) return; const rect = event.currentTarget.getBoundingClientRect(); setSplit(Math.min(72, Math.max(35, ((event.clientX - rect.left) / rect.width) * 100))); }} onPointerUp={() => { dragging.current = false; }} onPointerLeave={() => { dragging.current = false; }}>
         <div className="player-pane"><div className="media-info"><span>{store.project.mediaType === "video" ? "VÍDEO" : "AUDIO"}</span><strong>{store.project.name}</strong><small>{store.project.mediaPath}</small></div><MediaPlayer key={store.project.id} project={store.project} currentTimeMs={store.currentTimeMs} skipSeconds={store.settings.skipSeconds} onTime={store.setCurrentTime} onPlaying={store.setPlaying} onError={store.setError} seekSignal={seekSignal} /></div>
@@ -687,23 +703,41 @@ export default function App() {
         <TranscriptPanel key={store.project.id} segments={store.project.segments} voiceProfiles={store.voiceProfiles ?? undefined} currentTimeMs={store.currentTimeMs} followPlayback={store.project.settings.followPlayback} onFollowChange={(value) => store.updateProjectSettings({ followPlayback: value })} onSeek={seek} onEdit={editSegment} onSpeakerChange={store.editSpeaker} onSpeakerReview={store.reviewSpeaker} onReplaceAll={store.replaceAll} onSplit={store.splitSegment} onMergeNext={store.mergeWithNext} onExportMediaEdit={(excludedIds) => void exportMediaEdit(excludedIds)} onUndo={store.undo} onRedo={store.redo} onGroupParagraphs={() => void groupIntoParagraphs()} canUndo={Boolean(store.history.length)} canRedo={Boolean(store.future.length)} focusMode={transcriptFocus} onFocusMode={() => setTranscriptFocus((value) => !value)} />
       </main>}
     {store.project && <StatusBar progress={store.progress} model={store.project.model} language={store.project.detectedLanguage} />}
-    {showSettings && <SettingsDialog settings={store.settings} durationMs={store.project?.durationMs} onChange={changeSettings} onClose={() => setShowSettings(false)} />}
+    {showSettings && <SettingsDialog
+      settings={store.settings}
+      durationMs={store.project?.durationMs}
+      onChange={changeSettings}
+      onPrepareModels={() => {
+        localStorage.removeItem("transcriptor.cuda-runtime-prompt.v1");
+        setShowSettings(false);
+        setShowModelSetup(true);
+      }}
+      onClose={() => setShowSettings(false)}
+    />}
     {showVoices && <VoicesDialog settings={store.settings} project={store.project} appBusy={["analyzing", "waiting_model", "transcribing"].includes(store.progress.state)} onChange={changeSettings} onBeforeLearn={saveBeforeVoiceLearning} onClose={() => setShowVoices(false)} />}
     {showInsights && store.project && <InsightsDialog insights={store.project.insights ?? null} loading={insightsLoading} mode={insightMode} depth={insightDepth} progress={analysisProgress} analysisStartedAt={analysisStartedAt} aiStatus={localAiStatus} paragraphCount={store.project.segments.length} onModeChange={setInsightMode} onDepthChange={setInsightDepth} onAnalyze={analyzeTranscript} onCancelAnalysis={cancelAnalysis} onGroupParagraphs={groupIntoParagraphs} assistantAnswers={assistantAnswers} assistantLoading={assistantLoading} onAsk={(question) => void askTranscript(question)} onSeek={(milliseconds) => { seek(milliseconds); setShowInsights(false); }} onClose={() => setShowInsights(false)} />}
-    {showLive && <LiveRecorderDialog settings={{ ...projectSettingsFromApp(store.settings), model: "turbo", qualityMode: "instant", hotwords: vocabularyPrompt("") }} audioSource={store.settings.liveAudioSource} onAudioSourceChange={(source) => store.setSettings({ liveAudioSource: source })} onLanguageChange={(language) => store.setSettings({ defaultLanguage: language })} onComplete={(result, refineAfterStop) => void completeLiveRecording(result, refineAfterStop)} onClose={() => setShowLive(false)} />}
+    {showLive && <LiveRecorderDialog language={store.settings.defaultLanguage} audioSource={store.settings.liveAudioSource} onAudioSourceChange={(source) => store.setSettings({ liveAudioSource: source })} onLanguageChange={(language) => store.setSettings({ defaultLanguage: language })} onComplete={(result) => void completeLiveRecording(result)} onClose={() => setShowLive(false)} />}
     {showDiagnostics && <DiagnosticsDialog project={store.project} diagnostics={diagnostics} loading={diagnosticsLoading} onRun={() => void runDiagnostics()} onRelocate={() => void relocateProjectMedia()} onUseCandidate={(path) => void relocateProjectMedia(path)} onClose={() => setShowDiagnostics(false)} />}
     {showModelSetup && <ModelSetupDialog
-      onComplete={({ qualityMode, speakerAiReady }) => {
+      onComplete={({ qualityMode, speakerAiReady, cudaReady }) => {
         store.setSettings({
           qualityMode,
           defaultModel: qualityMode === "maximum" ? "large-v3" : "turbo",
           voiceProfilesEnabled: speakerAiReady,
           diarizationMode: speakerAiReady ? "neural" : "adaptive",
         });
+        if (cudaReady) {
+          localStorage.removeItem("transcriptor.cuda-runtime-prompt.v1");
+        } else {
+          localStorage.setItem("transcriptor.cuda-runtime-prompt.v1", "dismissed");
+        }
         setShowModelSetup(false);
       }}
       onLater={() => {
         sessionStorage.setItem("transcriptor.model-onboarding.postponed", "true");
+        if (localStorage.getItem("transcriptor.model-onboarding.v1") === "completed") {
+          localStorage.setItem("transcriptor.cuda-runtime-prompt.v1", "dismissed");
+        }
         setShowModelSetup(false);
       }}
     />}

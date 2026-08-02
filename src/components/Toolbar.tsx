@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { BrainCircuit, Download, FileAudio, Fingerprint, FolderOpen, Layers3, LoaderCircle, Mic, PanelTop, Settings, Square, Stethoscope, WandSparkles } from "lucide-react";
+import { BrainCircuit, Check, Download, FileAudio, Fingerprint, FolderOpen, LoaderCircle, Mic, PanelTop, Pencil, Settings, Square, Stethoscope, WandSparkles, X } from "lucide-react";
 import type { ExportFormat } from "../lib/exporters";
 import type { JobState, TranscriptionProject } from "../types";
 
@@ -17,7 +17,7 @@ interface ToolbarProps {
   onVoices: () => void;
   onSettings: () => void;
   onDiagnostics: () => void;
-  onOperations: () => void;
+  onRenameProject: (name: string) => Promise<void>;
   onShowProjects: () => void;
 }
 
@@ -35,11 +35,26 @@ const EXPORT_OPTIONS: Array<{ format: ExportFormat; label: string; detail: strin
   { format: "package-media", label: "Proyecto completo", detail: "Portable con audio/vídeo" },
 ];
 
-export function Toolbar({ project, jobState, isDirty, onOpen, onBrowserFile, onTranscribe, onCancel, onExport, onInsights, onLive, onVoices, onSettings, onDiagnostics, onOperations, onShowProjects }: ToolbarProps) {
+export function Toolbar({ project, jobState, isDirty, onOpen, onBrowserFile, onTranscribe, onCancel, onExport, onInsights, onLive, onVoices, onSettings, onDiagnostics, onRenameProject, onShowProjects }: ToolbarProps) {
   const input = useRef<HTMLInputElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [renaming, setRenaming] = useState(false);
   const working = ["analyzing", "waiting_model", "transcribing"].includes(jobState);
   const open = () => window.__TAURI_INTERNALS__ ? onOpen() : input.current?.click();
+
+  async function submitName() {
+    const name = draftName.trim();
+    if (!project || !name) return;
+    setRenaming(true);
+    try {
+      await onRenameProject(name);
+      setEditingName(false);
+    } finally {
+      setRenaming(false);
+    }
+  }
 
   return (
     <header className="toolbar" data-has-project={Boolean(project)}>
@@ -52,15 +67,22 @@ export function Toolbar({ project, jobState, isDirty, onOpen, onBrowserFile, onT
       <input ref={input} hidden type="file" accept="audio/*,video/*,.mkv,.m4v,.opus" onChange={(event) => event.target.files?.[0] && onBrowserFile(event.target.files[0])} />
       <div className="project-heading" title={project?.mediaPath}>
         <span className="project-heading-icon"><FileAudio size={16} /></span>
-        <span className="project-heading-copy"><small>{project ? "Proyecto actual" : "Espacio de trabajo"}</small><strong>{project?.name ?? "Ningún proyecto abierto"}</strong></span>
+        {editingName && project ? (
+          <form className="project-name-editor" onSubmit={(event) => { event.preventDefault(); void submitName(); }}>
+            <small>Proyecto actual</small>
+            <span><input autoFocus maxLength={120} value={draftName} onChange={(event) => setDraftName(event.target.value)} aria-label="Nombre del proyecto" /><button type="submit" disabled={renaming || !draftName.trim()} aria-label="Guardar nombre"><Check size={15} /></button><button type="button" disabled={renaming} onClick={() => setEditingName(false)} aria-label="Cancelar"><X size={15} /></button></span>
+          </form>
+        ) : (
+          <span className="project-heading-copy"><small>{project ? "Proyecto actual" : "Espacio de trabajo"}</small><strong>{project?.name ?? "Ningún proyecto abierto"}</strong></span>
+        )}
+        {project && !editingName && <button className="project-rename-button" disabled={working} onClick={() => { setDraftName(project.name); setEditingName(true); }} aria-label="Cambiar nombre del proyecto" title="Cambiar nombre"><Pencil size={14} /></button>}
         {isDirty && <i aria-label="Cambios pendientes" />}
       </div>
       <nav className="toolbar-actions" aria-label="Acciones del proyecto">
-        <button className="button live-button" disabled={working} onClick={onLive}><Mic size={17} /><span>En directo</span></button>
+        <button className="button live-button" disabled={working} onClick={onLive}><Mic size={17} /><span>Grabar</span></button>
         <button className="button secondary voices-toolbar-button" onClick={onVoices}><Fingerprint size={17} /><span>Voces</span></button>
         <button className="button intelligence" disabled={!project?.segments.length || working} onClick={onInsights}><BrainCircuit size={17} /><span>Inteligencia</span></button>
         <button className="icon-button health-button" onClick={onDiagnostics} aria-label="Diagnóstico y recuperación" title="Diagnóstico y recuperación"><Stethoscope size={18} /></button>
-        <button className="icon-button operations-button" onClick={onOperations} aria-label="Ver trabajos en curso" title="Trabajo en curso y cola"><Layers3 size={18} /></button>
         {working ? (
           <button className="button danger" onClick={onCancel}><Square size={13} fill="currentColor" /><span>Detener</span></button>
         ) : (

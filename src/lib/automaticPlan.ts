@@ -8,7 +8,7 @@ import type {
 } from "../types";
 
 export interface AutomaticDecision {
-  id: "compute" | "transcription" | "audio" | "speakers" | "profiles" | "live";
+  id: "compute" | "transcription" | "audio" | "speakers" | "profiles";
   label: string;
   value: string;
   detail: string;
@@ -139,16 +139,6 @@ export function buildAutomaticPlan(
         detail: voiceProfilesEnabled
           ? "Aprende únicamente de fragmentos fiables y conserva las huellas cifradas en Windows."
           : "La separación funciona sin perfiles; activarlos requiere una confirmación porque guardan huellas cifradas.",
-      },
-      {
-        id: "live",
-        label: "Transcripción en directo",
-        value: liveLatency === "ultra" ? "Retardo ultrabajo" : liveLatency === "stable" ? "Contexto estable" : "Retardo equilibrado",
-        detail: liveLatency === "ultra"
-          ? "El equipo permite bloques rápidos sin renunciar al repaso final."
-          : liveLatency === "stable"
-            ? "Usa bloques algo mayores para proteger la precisión en este equipo."
-            : "Equilibra contexto y velocidad según la capacidad disponible.",
       },
     ],
   };

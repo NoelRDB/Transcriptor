@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HardwareInfo, ModelCatalog } from "../types";
+import type { CudaRuntimeStatus, HardwareInfo, ModelCatalog } from "../types";
 import {
   buildRecommendedModelSetup,
   hasReadyCoreModel,
@@ -57,6 +57,23 @@ function hardware(totalMiB: number): HardwareInfo {
   };
 }
 
+function cudaStatus(): CudaRuntimeStatus {
+  return {
+    id: "cuda-runtime",
+    supported: true,
+    installed: false,
+    ready: false,
+    source: "missing",
+    root: "C:\\TranscriptorData\\runtime\\cuda",
+    downloadBytes: 1_285_431_644,
+    requiredFreeBytes: 1_822_302_556,
+    freeBytes: 20 * GIB,
+    canInstall: true,
+    missingFiles: ["cublas64_12.dll", "cublasLt64_12.dll", "cudnn64_9.dll"],
+    packages: [],
+  };
+}
+
 describe("preparación recomendada de modelos", () => {
   it("elige Turbo, Large-v3 y CAM++ con memoria y espacio suficientes", () => {
     const plan = buildRecommendedModelSetup(catalog(), hardware(16 * 1024), false);
@@ -105,5 +122,46 @@ describe("preparación recomendada de modelos", () => {
 
     partial.models[0] = { ...partial.models[0], integrity: "ready" };
     expect(hasReadyCoreModel(partial)).toBe(true);
+  });
+
+  it("añade CUDA al consentimiento sólo cuando hay una NVIDIA sin runtime", () => {
+    const gpuHardware: HardwareInfo = {
+      ...hardware(16 * 1024),
+      gpu: {
+        name: "NVIDIA RTX",
+        totalVramMiB: 8192,
+        usedVramMiB: 0,
+        utilizationPercent: 0,
+      },
+    };
+    const withoutCuda = buildRecommendedModelSetup(
+      catalog(),
+      gpuHardware,
+      false,
+      cudaStatus(),
+      true,
+    );
+    const cpuOnly = buildRecommendedModelSetup(
+      catalog(),
+      gpuHardware,
+      false,
+      cudaStatus(),
+    );
+    const withCuda = buildRecommendedModelSetup(
+      catalog(),
+      gpuHardware,
+      false,
+      { ...cudaStatus(), installed: true, ready: true, source: "managed" },
+      true,
+    );
+
+    expect(withoutCuda.includesCudaRuntime).toBe(true);
+    expect(cpuOnly.includesCudaRuntime).toBe(false);
+    expect(cpuOnly.canInstall).toBe(true);
+    expect(withoutCuda.downloadBytes).toBeGreaterThan(
+      withCuda.downloadBytes + 1_200_000_000,
+    );
+    expect(withoutCuda.reason).toContain("GPU NVIDIA");
+    expect(withCuda.includesCudaRuntime).toBe(false);
   });
 });

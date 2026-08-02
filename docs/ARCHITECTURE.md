@@ -12,7 +12,7 @@ React/TypeScript
 Sidecar Python
   ├─ servidor y cola/cancelación
   ├─ Faster-Whisper + CTranslate2
-  ├─ FFprobe/PyAV
+  ├─ FFprobe/FFmpeg
   ├─ restauración adaptativa + Faster-Whisper + diarización acústica
   ├─ agrupador contextual + análisis/chat semántico local
   ├─ sesiones PCM/WAV en directo y fuentes micrófono/sistema/mixta
@@ -42,7 +42,12 @@ El medio se reproduce directamente desde su ruta mediante el protocolo de recurs
 
 ### FFprobe con fallback
 
-FFprobe es el analizador preferente en las distribuciones completas. PyAV permite analizar y decodificar en desarrollo o si FFprobe no está disponible, manteniendo la función principal sin ejecutar comandos construidos dinámicamente.
+FFprobe analiza los medios y FFmpeg decodifica el audio como PCM mediante una
+lista de argumentos segura, sin construir comandos de shell. El sidecar consume
+la salida progresivamente, calcula el avance por muestras y termina el proceso
+al cancelar. PyAV permanece como dependencia transitiva de Faster-Whisper en el
+entorno de construcción, pero sus binarios no se incorporan al sidecar; el
+motor siempre entrega a Faster-Whisper audio ya decodificado como `numpy`.
 
 ## Persistencia
 
@@ -54,17 +59,17 @@ Faster-Whisper sigue produciendo fragmentos pequeños para ofrecer progreso y ti
 
 La memoria opcional de hablantes reutiliza embeddings CAM++ locales. SQLite conserva el centroide y una selección limitada de embeddings de alta confianza; en Windows se cifran con DPAPI para la cuenta actual. La UI sólo recibe metadatos de los perfiles, nunca los vectores. El audio original continúa perteneciendo al proyecto y no se duplica dentro del perfil.
 
-## Audio en directo
+## Grabación local
 
-WebView2 solicita la fuente elegida y el frontend reduce la señal a PCM mono de 16 kHz. Envía bloques Base64 tipados de latencia adaptativa; el motor los escribe primero en una carpeta controlada y después los procesa con un modelo Turbo persistente. Al detener, el PCM se finaliza como WAV y se crea un proyecto SQLite ordinario. Sólo se admite una sesión en directo o un trabajo de archivo simultáneo.
+WebView2 solicita la fuente elegida y el frontend reduce la señal a PCM mono de 16 kHz. Envía bloques Base64 tipados y numerados; el motor los escribe en una carpeta controlada y rechaza duplicados. Durante la captura no se carga ningún modelo ni se ejecutan transcripción o diarización. Al detener, el PCM se finaliza como WAV y se crea un proyecto SQLite ordinario en estado pendiente. La IA se ejecuta después mediante el flujo normal de **Transcribir**, con todo el audio disponible.
 
 ## Identidad de voz local
 
-La diarización utiliza un sistema híbrido. CAM++ produce embeddings temporales de 192 dimensiones desde características log-Mel calculadas con `kaldi-native-fbank`; ONNX Runtime ejecuta el modelo en CPU. En archivos se agrupan las huellas y se suavizan cambios breves. En directo se actualizan centroides efímeros con histéresis. Si el modelo no está instalado o falla, se conserva el comparador espectral anterior como fallback explícito. SQLite guarda la etiqueta y su confianza, pero no una huella reutilizable de la persona.
+La diarización utiliza un sistema híbrido. CAM++ produce embeddings temporales de 192 dimensiones desde características log-Mel calculadas con `kaldi-native-fbank`; ONNX Runtime ejecuta el modelo en CPU. En archivos se agrupan las huellas y se suavizan cambios breves. Las grabaciones creadas por la aplicación siguen exactamente este mismo flujo después de guardarse. Si el modelo no está instalado o falla, se conserva el comparador espectral anterior como fallback explícito. SQLite guarda la etiqueta y su confianza, pero no una huella reutilizable de la persona.
 
 Los modos Sencillo y Avanzado son capas de configuración, no motores distintos. El modo Sencillo fija una receta validada; el Avanzado expone los mismos parámetros tipados. Esto evita divergencias funcionales entre ambas interfaces.
 
-La separación ligera calcula vectores espectrales por intervención y mantiene como máximo dos centroides durante la sesión. Los vectores no se persisten. Este método minimiza dependencias y latencia, pero no sustituye a una diarización neuronal para voces similares o solapadas.
+La captura no intenta adivinar voces. La separación se realiza al transcribir el archivo completo, lo que evita crear hablantes falsos por ruido o por cambios de entonación de una misma persona.
 
 ## Privacidad
 

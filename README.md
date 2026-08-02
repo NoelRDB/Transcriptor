@@ -8,7 +8,7 @@
   **Reproduce · transcribe · identifica hablantes · comprende · edita · exporta**
 
   [![CI](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml/badge.svg)](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml)
-  [![Última versión](https://img.shields.io/github/v/release/NoelRDB/Transcriptor?display_name=tag&sort=semver&label=ultima%20version)](https://github.com/NoelRDB/Transcriptor/releases/latest)
+  [![Candidata v0.1.1](https://img.shields.io/badge/candidata-v0.1.1-f4a261)](https://github.com/NoelRDB/Transcriptor/releases/tag/v0.1.1)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows11&logoColor=white)](#instalación)
   [![Privacidad](https://img.shields.io/badge/privacidad-100%25%20local-cbff3d)](#privacidad-por-diseño)
   [![Tauri](https://img.shields.io/badge/Tauri-2.11-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
@@ -18,7 +18,7 @@
 
   <br>
 
-  <a href="https://github.com/NoelRDB/Transcriptor/releases/latest">
+  <a href="https://github.com/NoelRDB/Transcriptor/releases/download/v0.1.1/Transcriptor_0.1.1_x64-setup.exe">
     <img src="https://img.shields.io/badge/Descargar_para_Windows-setup.exe-cbff3d?style=for-the-badge&logo=windows11&logoColor=111111" alt="Descargar Transcriptor para Windows">
   </a>
 
@@ -38,8 +38,7 @@
 > [!IMPORTANT]
 > Para instalar Transcriptor no uses el botón verde **Code** ni descargues
 > `Source code.zip`: esos archivos son para programadores. Pulsa **Descargar para
-> Windows** y, dentro de `Assets`, elige el archivo que termina en
-> `_x64-setup.exe`.
+> Windows** y comenzará directamente la descarga del instalador `.exe`.
 
 ## ¿Qué hace?
 
@@ -167,19 +166,19 @@ Ollama guarda normalmente sus modelos en `%USERPROFILE%\.ollama\models`. La desc
 | ✨ **Profesional IA** | Turbo + revisión selectiva Large-v3 | Mejor equilibrio entre velocidad y precisión. |
 | 🧠 **Máxima fidelidad** | Large-v3 completo | Audio difícil cuando prima la precisión sobre el tiempo. |
 
-En el modo sencillo, Transcriptor analiza el hardware y configura automáticamente dispositivo, hilos, memoria, modelo y lote. El modo avanzado permite ajustar recursos, sensibilidad de hablantes, número máximo de voces y latencia del directo.
+En el modo sencillo, Transcriptor analiza el hardware y configura automáticamente dispositivo, hilos, memoria, modelo y lote. El modo avanzado permite ajustar recursos, sensibilidad de hablantes y número máximo de voces para la transcripción posterior.
 
 Las velocidades dependen del ruido, el modelo, la duración, la refrigeración y el hardware. La interfaz muestra rendimiento, VRAM, RAM, CPU, audio procesado y tiempo restante medidos durante el trabajo; no inventa porcentajes.
 
-## Transcripción en directo
+## Grabadora local
 
-1. Pulsa **En directo**.
+1. Pulsa **Grabar**.
 2. Elige micrófono, audio del sistema o mezcla.
-3. Fija el idioma o utiliza detección automática.
-4. Selecciona la latencia recomendada o una configuración avanzada.
-5. Empieza a hablar.
+3. Fija el idioma que se utilizará después o deja la detección automática.
+4. Graba, pausa y reanuda cuando lo necesites.
+5. Finaliza para abrir el WAV como un proyecto normal.
 
-Cada bloque PCM se guarda localmente antes de procesarse. El texto provisional aparece mientras hablas y, al detener, la aplicación finaliza un WAV reproducible y crea un proyecto normal para corregir, analizar o exportar.
+La grabadora no carga Whisper, no transcribe y no separa hablantes durante la captura. Muestra una onda reactiva al nivel de audio y guarda cada bloque PCM localmente. Al detener, finaliza un WAV reproducible; después basta con pulsar **Transcribir** para ejecutar una sola vez la transcripción, la diarización y el reconocimiento de perfiles de voz con todo el contexto disponible.
 
 ## Privacidad por diseño
 
@@ -195,16 +194,44 @@ Tus archivos ──► tu ordenador ──► tus proyectos
 - Los diagnósticos ocultan rutas personales.
 - Los perfiles de voz se cifran para la cuenta actual de Windows.
 - Cada usuario y cada ordenador poseen su propia base de datos.
-- El repositorio y los instaladores **no contienen proyectos, grabaciones, perfiles, modelos ni caché**.
+- El repositorio y los instaladores **no contienen proyectos, grabaciones,
+  perfiles, modelos ni caché del usuario**.
+- La Release heredada `v0.1.0` sí incorpora bibliotecas CUDA de NVIDIA; las
+  compilaciones actuales de `master` y las próximas versiones las excluyen y
+  sólo ofrecen descargarlas con consentimiento.
 - Desinstalar la aplicación no borra silenciosamente los proyectos personales.
 
 [Consultar la política completa de datos locales →](docs/PRIVACY.md)
+
+## Code signing policy (política de firma)
+
+La versión pública `v0.1.0` se distribuye **sin firma de código**. La solicitud
+para el programa gratuito de SignPath Foundation está pendiente de preparación
+y evaluación: SignPath no ha aprobado todavía el proyecto y ninguna versión de
+Transcriptor afirma estar firmada por SignPath Foundation. Además, `v0.1.0`
+incluye el runtime propietario CUDA dentro de sus instaladores heredados, por
+lo que **no es candidata a recibir una firma de SignPath**.
+
+Si la solicitud se aprueba, sólo se firmarán artefactos reproducibles obtenidos
+del repositorio oficial mediante el proceso documentado, después de pasar las
+pruebas, la revisión de licencias y una aprobación manual de la versión. En ese
+momento se incorporará a la página de descarga la atribución exigida:
+“Free code signing provided by
+[SignPath.io](https://signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/)”.
+
+El mantenedor actual, [NoelRDB](https://github.com/NoelRDB), ejerce los roles de
+autor, revisor y aprobador. Consulta la
+[Code signing policy completa](docs/CODE_SIGNING_POLICY.md) para ver el estado
+real, el alcance, los controles y cómo se identificará una versión firmada.
 
 ## Instalación
 
 ### Windows 10 y 11
 
-**[Descargar la última versión para Windows →](https://github.com/NoelRDB/Transcriptor/releases/latest)**
+**[Descargar directamente Transcriptor v0.1.1 para Windows →](https://github.com/NoelRDB/Transcriptor/releases/download/v0.1.1/Transcriptor_0.1.1_x64-setup.exe)**
+
+[Ver la página de la Release, sus sumas SHA-256 y el instalador MSI](https://github.com/NoelRDB/Transcriptor/releases/tag/v0.1.1).
 
 1. En la sección **Assets**, descarga `Transcriptor_<versión>_x64-setup.exe`.
 2. Abre el archivo descargado y sigue el asistente.
@@ -212,10 +239,46 @@ Tus archivos ──► tu ordenador ──► tus proyectos
 4. En la primera transcripción, confirma el modelo recomendado. La aplicación
    muestra su tamaño y lo instala dentro de tu cuenta de Windows.
 
-El instalador ya incorpora la aplicación, el motor local de Python, FFmpeg,
-FFprobe, el instalador de WebView2 y las bibliotecas necesarias para usar CPU o
-una GPU NVIDIA compatible. **No hay que instalar Python, Node.js, Rust, CUDA ni
-escribir comandos.**
+`v0.1.1` es una candidata pública de evaluación y no tiene firma Authenticode.
+Verifica `checksums-SHA256.txt` antes de ejecutarla.
+En esta candidata tampoco están firmados individualmente `Transcriptor.exe`,
+el sidecar ni los DLL internos.
+
+Cada asset final publicado desde GitHub Actions incorpora además una
+atestación Sigstore gratuita de procedencia. Con GitHub CLI puede verificarse
+mediante `gh attestation verify <archivo> -R NoelRDB/Transcriptor`. Esto
+demuestra el repositorio y workflow que produjeron ese hash, pero no sustituye
+Authenticode, el editor mostrado por Windows ni la reputación de SmartScreen.
+
+Todos los instaladores incorporan la aplicación, el motor local de Python,
+FFmpeg, FFprobe y todo lo necesario para transcribir con CPU. También necesitan
+el runtime **Microsoft Edge WebView2**, que Windows 10/11 normalmente ya
+incluye. Para mantener el instalador íntegramente auditable, no contiene ni
+descarga el bootstrapper propietario. En el caso poco habitual de que WebView2
+falte, instálalo primero desde la
+[página oficial de Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
+**No hay que instalar Python, Node.js, Rust ni escribir comandos.**
+
+El motor CPU incluido no reutiliza el binario oficial de CTranslate2: se
+construye desde fuentes fijadas con CUDA y oneMKL desactivados, usando oneDNN y
+LLVM OpenMP abiertos. El instalador conserva un marcador de procedencia y los
+SHA-256 de cada DLL; la publicación se bloquea si no coinciden o si el binario
+importa runtimes CUDA, oneMKL, Intel OpenMP o Visual C++ OpenMP.
+
+> [!IMPORTANT]
+> La Release heredada `v0.1.0`, que continúa descargable, incluye cuBLAS y cuDNN
+> dentro del instalador y no está firmada. Las compilaciones actuales de
+> `master` y la próxima Release ya no incluyen esas bibliotecas propietarias.
+> `v0.1.0` no se presentará retroactivamente a SignPath.
+
+En las compilaciones posteriores a `v0.1.0`, si se detecta una GPU NVIDIA
+compatible y quieres acelerarla, el asistente **Prepara la IA local** ofrece la
+tarjeta **Aceleración NVIDIA CUDA**. Antes de descargar aproximadamente
+1,27 GiB muestra origen, tamaño y 6 GiB de espacio temporal necesario; requiere una confirmación
+explícita, enseña progreso real y permite cancelar o reintentar. Cada archivo se
+valida con un SHA-256 fijado antes de activarlo en la carpeta privada de la
+aplicación. Rechazar esa descarga no bloquea Transcriptor: el motor utiliza CPU
+automáticamente.
 
 Los modelos de reconocimiento se descargan desde **Ajustes → Modelos locales**
 porque pueden ocupar varios gigabytes. Esta descarga forma parte de la
@@ -227,8 +290,10 @@ sola vez. Después, la transcripción funciona localmente incluso sin conexión.
 > administradores. `checksums-SHA256.txt` sirve para comprobar la descarga y
 > los archivos `Source code` no instalan la aplicación.
 
-Mientras no haya firma de código, Windows SmartScreen puede mostrar “editor
-desconocido”. Antes de continuar, comprueba que la dirección empieza por
+`v0.1.0` no está firmada y Windows SmartScreen puede mostrar “editor
+desconocido”. Una firma futura tampoco garantiza que SmartScreen deje de
+advertir inmediatamente: Windows construye la reputación con el tiempo. Antes
+de continuar, comprueba que la dirección empieza por
 `https://github.com/NoelRDB/Transcriptor/`. La
 [guía para usuarios no técnicos](docs/INSTALLATION.md) explica cada pantalla y
 cómo verificar el instalador.
@@ -243,7 +308,9 @@ cómo verificar el instalador.
 
 ### Requisitos
 
-- Windows 10 u 11 y WebView2.
+- Windows 10 u 11 y
+  [Microsoft Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)
+  instalado.
 - Node.js 18.20 o posterior.
 - Rust estable con toolchain MSVC.
 - Visual Studio Build Tools con C++.
@@ -282,14 +349,19 @@ Las pruebas cubren timestamps, sincronización, exportadores, Unicode, persisten
 
 ## Crear instaladores
 
-Prepara una compilación redistribuible LGPL de FFmpeg/FFprobe y ejecuta:
+Prepara el ZIP LGPL construido desde la fuente fijada (consulta la guía de
+empaquetado) y ejecuta:
 
 ```powershell
-.\scripts\stage-ffmpeg.ps1 -ArchivePath C:\ruta\ffmpeg-lgpl-shared.zip
+.\scripts\stage-ffmpeg.ps1 `
+  -ArchivePath C:\ruta\ffmpeg-runtime-windows-x64.zip
 npm run package:windows
 ```
 
-Los paquetes NSIS/MSI se generan en `src-tauri\target\release\bundle`; los artefactos finales y sus sumas SHA-256 se copian a `release/`. Ambas ubicaciones están excluidas de Git.
+Los paquetes NSIS/MSI se generan en `src-tauri\target\release\bundle`; los
+artefactos finales, sus sumas SHA-256, los avisos y el código fuente
+correspondiente exacto de FFmpeg se preparan para la Release. Estas ubicaciones
+están excluidas de Git.
 
 [Leer la guía de empaquetado y licencias →](docs/PACKAGING.md)
 
@@ -339,7 +411,7 @@ La interfaz nunca espera de forma síncrona a la extracción o inferencia. La co
 - [x] Análisis local profundo y mapa conceptual.
 - [x] Cola persistente y trabajos paralelos.
 - [x] Exportadores y paquetes portables.
-- [ ] Firma de código para Windows.
+- [ ] Aprobación e integración de firma de código para Windows.
 - [x] Primer instalador público para Windows.
 - [ ] Forma de onda interactiva.
 - [ ] Traducción local.
@@ -354,6 +426,7 @@ Consulta el [historial de cambios](CHANGELOG.md) y las [limitaciones conocidas](
 - [Protocolo frontend–sidecar](docs/PROTOCOL.md)
 - [Separación de hablantes](docs/SPEAKER_DIARIZATION.md)
 - [Privacidad y datos locales](docs/PRIVACY.md)
+- [Code signing policy](docs/CODE_SIGNING_POLICY.md)
 - [Empaquetado para Windows](docs/PACKAGING.md)
 - [Publicación de versiones](docs/RELEASING.md)
 - [Limitaciones conocidas](docs/LIMITATIONS.md)

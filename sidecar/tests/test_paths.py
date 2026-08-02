@@ -24,3 +24,4 @@ def test_existing_windows_install_continues_using_legacy_user_data(
     (legacy / "transcriptor.sqlite3").write_bytes(b"existing project")
 
     assert paths.app_data_dir() == legacy
+    assert paths.preferred_app_data_dir() == tmp_path / "TranscriptorData"

@@ -637,14 +637,12 @@ wheels = [
 
 [[package]]
 name = "transcriptor-engine"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
     { name = "faster-whisper" },
     { name = "kaldi-native-fbank" },
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cudnn-cu12" },
     { name = "onnxruntime" },
     { name = "psutil" },
     { name = "python-docx" },
@@ -652,6 +650,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+cuda-runtime = [
+    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cudnn-cu12" },
+]
 dev = [
     { name = "pyinstaller" },
     { name = "pytest" },
@@ -663,8 +665,8 @@ requires-dist = [
     { name = "av", specifier = "==18.0.0" },
     { name = "faster-whisper", specifier = "==1.2.1" },
     { name = "kaldi-native-fbank", specifier = "==1.22.3" },
-    { name = "nvidia-cublas-cu12", specifier = "==12.9.2.10" },
-    { name = "nvidia-cudnn-cu12", specifier = "==9.25.0.15" },
+    { name = "nvidia-cublas-cu12", marker = "extra == 'cuda-runtime'", specifier = "==12.9.2.10" },
+    { name = "nvidia-cudnn-cu12", marker = "extra == 'cuda-runtime'", specifier = "==9.25.0.15" },
     { name = "onnxruntime", specifier = "==1.27.0" },
     { name = "psutil", specifier = "==7.2.2" },
     { name = "pyinstaller", marker = "extra == 'dev'", specifier = "==6.21.0" },
@@ -673,7 +675,7 @@ requires-dist = [
     { name = "reportlab", specifier = "==5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.14" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["cuda-runtime", "dev"]
 
 [[package]]
 name = "typing-extensions"

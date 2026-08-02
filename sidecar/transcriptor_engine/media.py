@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
+import wave
 from pathlib import Path
 from typing import Any
-
-import av
 
 from .paths import executable_dir
 
@@ -16,17 +16,38 @@ def analyze_media(media_path: str) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError("El archivo no existe o fue movido.")
     probe = _find_tool("ffprobe")
+    probe_error: BaseException | None = None
     if probe:
         try:
             return _analyze_ffprobe(probe, path)
-        except (subprocess.SubprocessError, json.JSONDecodeError, KeyError):
-            pass
-    return _analyze_pyav(path)
+        except (
+            OSError,
+            subprocess.SubprocessError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
+            probe_error = error
+    try:
+        return _analyze_wav(path)
+    except (EOFError, OSError, wave.Error) as wav_error:
+        if probe_error is not None:
+            raise ValueError(_probe_error_message(probe_error)) from probe_error
+        raise RuntimeError(
+            "FFprobe no está disponible y el archivo no es un WAV PCM legible. "
+            "Reinstala Transcriptor para recuperar el analizador multimedia."
+        ) from wav_error
 
 
 def _find_tool(name: str) -> str | None:
-    extension = ".exe" if __import__("sys").platform == "win32" else ""
-    candidates = [executable_dir() / "ffmpeg" / f"{name}{extension}", executable_dir() / f"{name}{extension}"]
+    extension = ".exe" if sys.platform == "win32" else ""
+    development_root = Path(__file__).resolve().parents[1]
+    candidates = [
+        executable_dir() / "ffmpeg" / f"{name}{extension}",
+        executable_dir() / f"{name}{extension}",
+        development_root / "ffmpeg" / f"{name}{extension}",
+    ]
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
@@ -43,13 +64,15 @@ def _analyze_ffprobe(probe: str, path: Path) -> dict[str, Any]:
             "format=duration,format_name:stream=index,codec_type,codec_name,width,height",
             "-of",
             "json",
-            str(path),
+            str(path.resolve()),
         ],
         check=True,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         timeout=60,
+        shell=False,
     )
     data = json.loads(completed.stdout)
     streams = data.get("streams", [])
@@ -67,25 +90,45 @@ def _analyze_ffprobe(probe: str, path: Path) -> dict[str, Any]:
     }
 
 
-def _analyze_pyav(path: Path) -> dict[str, Any]:
-    try:
-        with av.open(str(path)) as container:
-            audio = list(container.streams.audio)
-            video = list(container.streams.video)
-            if not audio:
-                raise ValueError("El archivo no contiene ninguna pista de audio.")
-            duration = float(container.duration or 0) / av.time_base
-            first_video = video[0] if video else None
-            return {
-                "durationMs": round(duration * 1000),
-                "format": container.format.name,
-                "codec": audio[0].codec_context.name,
-                "width": getattr(first_video, "width", None),
-                "height": getattr(first_video, "height", None),
-                "audioTracks": len(audio),
-                "analyzer": "pyav",
-            }
-    except av.AVError as error:
-        raise ValueError(
-            "No se pudo leer el archivo. Puede estar dañado o utilizar un formato no compatible."
-        ) from error
+def _analyze_wav(path: Path) -> dict[str, Any]:
+    """Small stdlib fallback used when FFprobe is unavailable (for example in CI)."""
+    with wave.open(str(path), "rb") as source:
+        channels = source.getnchannels()
+        sample_rate = source.getframerate()
+        frames = source.getnframes()
+        sample_width = source.getsampwidth()
+        if channels < 1 or sample_rate < 1:
+            raise wave.Error("invalid WAV parameters")
+        duration_ms = round(frames / sample_rate * 1000)
+    codec = {
+        1: "pcm_u8",
+        2: "pcm_s16le",
+        3: "pcm_s24le",
+        4: "pcm_s32le",
+    }.get(sample_width, f"pcm_{sample_width * 8}bit")
+    return {
+        "durationMs": duration_ms,
+        "format": "wav",
+        "codec": codec,
+        "width": None,
+        "height": None,
+        "audioTracks": 1,
+        "analyzer": "wave",
+    }
+
+
+def _probe_error_message(error: BaseException) -> str:
+    detail = ""
+    if isinstance(error, subprocess.CalledProcessError):
+        stderr = error.stderr
+        if isinstance(stderr, bytes):
+            detail = stderr.decode("utf-8", errors="replace")
+        elif stderr:
+            detail = str(stderr)
+    detail_lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    if detail_lines:
+        return (
+            "No se pudo leer el archivo. Puede estar dañado o utilizar un formato no compatible: "
+            + " · ".join(detail_lines[-2:])[:500]
+        )
+    return "No se pudo leer el archivo. Puede estar dañado o utilizar un formato no compatible."

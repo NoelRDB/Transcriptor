@@ -15,13 +15,23 @@ _LEGACY_DATA_MARKERS = (
 )
 
 
-def app_data_dir() -> Path:
+def _platform_data_root() -> Path:
     if sys.platform == "win32":
-        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    elif sys.platform == "darwin":
-        root = Path.home() / "Library" / "Application Support"
-    else:
-        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+
+
+def preferred_app_data_dir() -> Path:
+    """Return the stable data root used by newly managed application runtimes."""
+    path = _platform_data_root() / APP_DATA_DIRECTORY
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def app_data_dir() -> Path:
+    root = _platform_data_root()
     preferred = root / APP_DATA_DIRECTORY
     legacy = root / LEGACY_APP_DATA_DIRECTORY
     path = legacy if _contains_legacy_user_data(legacy) else preferred

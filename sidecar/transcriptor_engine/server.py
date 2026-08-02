@@ -12,6 +12,14 @@ from typing import Any
 
 from .assistant import answer_transcript_question, expand_search_terms
 from .audio import AudioDecodeCancelled, decode_audio_with_progress
+from .cuda_runtime import (
+    CUDA_RUNTIME_ID,
+    CudaRuntimeCancelled,
+    CudaRuntimeError,
+    get_cuda_runtime_status,
+    install_cuda_runtime,
+    preload_cuda_backend,
+)
 from .database import ProjectDatabase
 from .deep_insights import AnalysisCancelledError, analyze_transcript_deep, get_local_ai_status
 from .diagnostics import record_diagnostic
@@ -26,6 +34,7 @@ from .paragraphs import group_segments
 from .portable import export_package, import_package
 from .privacy import preview_redactions, redact_project
 from .protocol import ProtocolWriter
+from .recording import RecordingSessionManager
 from .speaker_ai import download_speaker_model, neural_assign_speakers, speaker_ai_status
 from .system_diagnostics import diagnose_system
 from .transcriber import CancelledError, Transcriber
@@ -37,6 +46,7 @@ class EngineServer:
         self.writer = writer or ProtocolWriter()
         self.transcriber = Transcriber()
         self.live = LiveSessionManager(self.transcriber)
+        self.recorder = RecordingSessionManager()
         self._jobs: dict[str, threading.Event] = {}
         self._analysis_jobs: dict[str, threading.Event] = {}
         self._voice_jobs: dict[str, threading.Event] = {}
@@ -75,6 +85,7 @@ class EngineServer:
             ]
             for cancel in cancellation_tokens:
                 cancel.set()
+        self.recorder.cancel_all()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             with self._jobs_lock:
@@ -105,6 +116,36 @@ class EngineServer:
                     request_id,
                     get_hardware_info(self.transcriber._cuda_runtime_available()),
                 )
+            elif action == "get_cuda_runtime_status":
+                status = get_cuda_runtime_status()
+                status["usable"] = False
+                if status["ready"]:
+                    try:
+                        activation = preload_cuda_backend()
+                        status.update(
+                            {
+                                "restartRequired": activation.get(
+                                    "restartRequired",
+                                    False,
+                                ),
+                                "activationState": activation.get(
+                                    "activationState",
+                                    status.get("activationState"),
+                                ),
+                            }
+                        )
+                        status["usable"] = bool(
+                            activation.get("activated")
+                            and self.transcriber._cuda_runtime_available()
+                        )
+                    except CudaRuntimeError as error:
+                        status["activationState"] = "failed"
+                        status["activationError"] = str(error)
+                self.writer.result(request_id, status)
+            elif action == "install_cuda_runtime":
+                self._start_cuda_runtime_download(request_id)
+            elif action == "cancel_cuda_runtime_download":
+                self._cancel_model_download(request_id, CUDA_RUNTIME_ID)
             elif action == "list_models":
                 self.writer.result(request_id, list_models())
             elif action == "download_model":
@@ -286,7 +327,7 @@ class EngineServer:
                 self._cancel_analysis(request_id, str(payload["projectId"]))
             elif action == "start_live_session":
                 with self._jobs_lock:
-                    if self._jobs or self._analysis_jobs or self._voice_jobs:
+                    if self.recorder.active or self._jobs or self._analysis_jobs or self._voice_jobs:
                         raise ValueError("Detén el trabajo actual antes de grabar en directo.")
                 def emit_live_start(event_type: str, live_payload: dict[str, Any]) -> None:
                     self.writer.send(event_type, live_payload)
@@ -345,6 +386,39 @@ class EngineServer:
             elif action == "cancel_live_session":
                 self.live.cancel(str(payload["sessionId"]))
                 self.writer.result(request_id, {"cancelled": True})
+            elif action == "start_recording_session":
+                with self._jobs_lock:
+                    if (
+                        self.live.active
+                        or self.recorder.active
+                        or self._jobs
+                        or self._analysis_jobs
+                        or self._voice_jobs
+                    ):
+                        raise ValueError("Detén el trabajo actual antes de empezar a grabar.")
+                self.writer.result(
+                    request_id,
+                    self.recorder.start(str(payload.get("language") or "auto")),
+                )
+            elif action == "push_recording_audio":
+                self.writer.result(
+                    request_id,
+                    self.recorder.push(
+                        str(payload["sessionId"]),
+                        str(payload["pcmBase64"]),
+                        int(payload["chunkId"]),
+                    ),
+                )
+            elif action == "stop_recording_session":
+                self.writer.result(
+                    request_id,
+                    self.recorder.stop(str(payload["sessionId"])),
+                )
+                threading.Thread(target=self._fill_queue_slots, daemon=True).start()
+            elif action == "cancel_recording_session":
+                self.recorder.cancel(str(payload["sessionId"]))
+                self.writer.result(request_id, {"cancelled": True})
+                threading.Thread(target=self._fill_queue_slots, daemon=True).start()
             elif action == "transcribe":
                 self._start_transcription(request_id, payload["project"])
             elif action == "enqueue_transcription":
@@ -383,6 +457,9 @@ class EngineServer:
         except Exception as error:
             self.writer.error(request_id, self._safe_error(error))
 
+    def _recording_active(self) -> bool:
+        return self.recorder.active or self.live.active
+
     def _start_voice_learning(
         self,
         request_id: str,
@@ -410,7 +487,7 @@ class EngineServer:
                 "La IA local CAM++ no está instalada. Instálala en Voces antes de analizar el proyecto."
             )
         with self._jobs_lock:
-            if self.live.active or self._jobs or self._analysis_jobs or self._voice_jobs:
+            if self._recording_active() or self._jobs or self._analysis_jobs or self._voice_jobs:
                 raise ValueError("Ya hay otro trabajo en curso. Espera a que termine o cancélalo.")
             cancel = threading.Event()
             self._voice_jobs[project_id] = cancel
@@ -643,7 +720,7 @@ class EngineServer:
         project_id = project["id"]
         capacity = self._effective_queue_concurrency()
         with self._jobs_lock:
-            if self.live.active:
+            if self._recording_active():
                 raise ValueError("Detén la grabación en directo antes de iniciar otra transcripción.")
             if project_id in self._jobs:
                 raise ValueError("Este proyecto ya se está transcribiendo.")
@@ -697,7 +774,7 @@ class EngineServer:
         project = payload["project"]
         project_id = str(project["id"])
         with self._jobs_lock:
-            if self.live.active or self._jobs:
+            if self._recording_active() or self._jobs:
                 raise ValueError("Detén la grabación o transcripción actual antes de analizar el contenido.")
             if self._analysis_jobs or self._voice_jobs:
                 raise ValueError("Ya hay un análisis en curso. Espera a que termine o cancélalo.")
@@ -721,7 +798,7 @@ class EngineServer:
         project = payload["project"]
         project_id = str(project["id"])
         with self._jobs_lock:
-            if self.live.active or self._jobs or self._analysis_jobs or self._voice_jobs:
+            if self._recording_active() or self._jobs or self._analysis_jobs or self._voice_jobs:
                 raise ValueError("Espera a que termine el trabajo actual antes de preguntar.")
             cancel = threading.Event()
             self._analysis_jobs[project_id] = cancel
@@ -851,6 +928,132 @@ class EngineServer:
         finally:
             with self._jobs_lock:
                 self._model_downloads.pop(model_id, None)
+
+    def _start_cuda_runtime_download(self, request_id: str) -> None:
+        status = get_cuda_runtime_status()
+        if status["ready"]:
+            status["usable"] = self.transcriber._cuda_runtime_available()
+            self.writer.result(
+                request_id,
+                {
+                    "accepted": True,
+                    "runtimeId": CUDA_RUNTIME_ID,
+                    "alreadyInstalled": True,
+                },
+            )
+            self.writer.send("cuda_runtime_completed", status)
+            return
+        if not status["supported"]:
+            raise OSError(
+                "La aceleración NVIDIA local requiere Windows de 64 bits. "
+                "La transcripción por CPU seguirá funcionando."
+            )
+        if not status["canInstall"]:
+            raise OSError(
+                "No hay espacio suficiente para preparar CUDA. "
+                f"Se necesitan {status['requiredFreeBytes'] / 1024**3:.1f} GB libres "
+                f"y hay {status['freeBytes'] / 1024**3:.1f} GB."
+            )
+        hardware = get_hardware_info(False)
+        if not hardware.get("gpu"):
+            raise OSError(
+                "No se ha detectado una GPU NVIDIA compatible. "
+                "Puedes continuar usando el motor local por CPU."
+            )
+        with self._jobs_lock:
+            if CUDA_RUNTIME_ID in self._model_downloads:
+                raise ValueError("CUDA ya se está preparando.")
+            cancel = threading.Event()
+            self._model_downloads[CUDA_RUNTIME_ID] = cancel
+        self.writer.result(
+            request_id,
+            {"accepted": True, "runtimeId": CUDA_RUNTIME_ID},
+        )
+        threading.Thread(
+            target=self._run_cuda_runtime_download,
+            args=(cancel,),
+            name="cuda-runtime-manager",
+            daemon=True,
+        ).start()
+
+    def _run_cuda_runtime_download(self, cancel: threading.Event) -> None:
+        try:
+            def emit(payload: dict[str, Any]) -> None:
+                if not cancel.is_set():
+                    self.writer.send(
+                        "cuda_runtime_progress",
+                        {"runtimeId": CUDA_RUNTIME_ID, **payload},
+                    )
+
+            result = install_cuda_runtime(emit, cancel.is_set)
+            activation_error: str | None = None
+            try:
+                activation = preload_cuda_backend()
+            except CudaRuntimeError as error:
+                activation = {
+                    "activated": False,
+                    "restartRequired": False,
+                    "activationState": "failed",
+                }
+                activation_error = str(error)
+            usable = bool(
+                activation.get("activated")
+                and self.transcriber._cuda_runtime_available()
+            )
+            self.writer.send(
+                "cuda_runtime_completed",
+                {
+                    **result,
+                    "runtimeId": CUDA_RUNTIME_ID,
+                    "usable": usable,
+                    "restartRequired": bool(
+                        activation.get("restartRequired")
+                    ),
+                    "activationState": activation.get("activationState"),
+                    "activationError": activation_error,
+                },
+            )
+            if activation.get("restartRequired"):
+                self.writer.send(
+                    "engine_log",
+                    {
+                        "level": "warning",
+                        "message": (
+                            "El backend GPU opcional se instaló y verificó, pero "
+                            "CTranslate2 ya estaba cargado. Reinicia Transcriptor "
+                            "para activarlo; hasta entonces seguirá visible CPU OSS."
+                        ),
+                    },
+                )
+            elif not usable:
+                self.writer.send(
+                    "engine_log",
+                    {
+                        "level": "warning",
+                        "message": (
+                            "El backend GPU opcional se instaló y verificó, pero no "
+                            "pudo activarse. Revisa el controlador o el detalle de "
+                            "estado; el motor CPU OSS sigue disponible."
+                        ),
+                    },
+                )
+        except CudaRuntimeCancelled:
+            self.writer.send(
+                "cuda_runtime_cancelled",
+                {"runtimeId": CUDA_RUNTIME_ID},
+            )
+        except Exception as error:
+            event = "cuda_runtime_cancelled" if cancel.is_set() else "cuda_runtime_failed"
+            self.writer.send(
+                event,
+                {
+                    "runtimeId": CUDA_RUNTIME_ID,
+                    "message": self._safe_error(error),
+                },
+            )
+        finally:
+            with self._jobs_lock:
+                self._model_downloads.pop(CUDA_RUNTIME_ID, None)
 
     def _cancel_model_download(self, request_id: str, model_id: str) -> None:
         with self._jobs_lock:
@@ -1318,7 +1521,7 @@ class EngineServer:
                     if (
                         self._analysis_jobs
                         or self._voice_jobs
-                        or self.live.active
+                        or self._recording_active()
                         or len(self._jobs) >= self._effective_queue_concurrency()
                     ):
                         return

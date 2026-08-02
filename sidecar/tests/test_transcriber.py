@@ -1,8 +1,16 @@
+import sys
 import threading
 
 import pytest
 
 from transcriptor_engine.transcriber import Transcriber, global_progress
+
+
+def test_faster_whisper_import_uses_deliberate_av_stub():
+    from faster_whisper import WhisperModel
+
+    assert WhisperModel is not None
+    assert getattr(sys.modules["av"], "__transcriptor_stub__", False) is True
 
 
 def test_global_progress_reserves_space_for_every_real_phase():
@@ -31,7 +39,20 @@ def test_auto_falls_back_to_cpu_with_explanation(monkeypatch):
 
     assert device == "cpu"
     assert events[0][0] == "engine_log"
-    assert "continuará por CPU" in events[0][1]["message"]
+    assert events[0][1]["level"] == "info"
+    assert "Modo CPU activo" in events[0][1]["message"]
+    assert "misma calidad" in events[0][1]["message"]
+
+
+def test_explicit_cuda_request_warns_when_gpu_is_unavailable(monkeypatch):
+    transcriber = Transcriber()
+    monkeypatch.setattr(transcriber, "_cuda_runtime_available", lambda: False)
+    events = []
+
+    device = transcriber._select_device("cuda", lambda event, payload: events.append((event, payload)))
+
+    assert device == "cpu"
+    assert events[0][1]["level"] == "warning"
 
 
 def test_auto_uses_cuda_only_after_successful_probe(monkeypatch):

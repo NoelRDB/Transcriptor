@@ -1,6 +1,6 @@
 [project]
 name = "transcriptor-engine"
-version = "0.1.0"
+version = "0.1.1"
 description = "Motor local de transcripción para Transcriptor"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
@@ -8,8 +8,6 @@ dependencies = [
   "av==18.0.0",
   "faster-whisper==1.2.1",
   "kaldi-native-fbank==1.22.3",
-  "nvidia-cublas-cu12==12.9.2.10",
-  "nvidia-cudnn-cu12==9.25.0.15",
   "psutil==7.2.2",
   "python-docx==1.2.0",
   "reportlab==5.0.0",
@@ -17,6 +15,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cuda-runtime = [
+  "nvidia-cublas-cu12==12.9.2.10",
+  "nvidia-cudnn-cu12==9.25.0.15",
+]
 dev = [
   "pyinstaller==6.21.0",
   "pytest==9.0.2",

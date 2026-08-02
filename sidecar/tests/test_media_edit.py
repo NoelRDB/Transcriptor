@@ -24,3 +24,15 @@ def test_command_keeps_unicode_paths_as_separate_arguments(monkeypatch):
     assert command[command.index("-i") + 1] == str(source)
     assert command[-1] == str(target)
     assert "concat=n=2:v=0:a=1" in command[command.index("-filter_complex") + 1]
+
+
+def test_video_edit_uses_the_bundled_lgpl_encoder(monkeypatch):
+    monkeypatch.setattr(media_edit, "_find_tool", lambda _name: "C:/Tools/ffmpeg.exe")
+    source = Path("C:/Vídeos con espacios/origen.mp4")
+    target = Path("C:/Salida/copia editada.mp4")
+
+    command = media_edit.build_edit_command(source, target, [(0, 1_000)], "video")
+
+    assert "mpeg4" in command
+    assert "libx264" not in command
+    assert command[-1] == str(target)

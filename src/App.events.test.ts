@@ -35,6 +35,23 @@ describe("eventos parciales de transcripción", () => {
   beforeEach(() => {
     useAppStore.getState().setProject(project());
     useAppStore.getState().setVoiceProfiles([]);
+    useAppStore.getState().setError(null);
+    useAppStore.getState().setNotice(null);
+  });
+
+  it("muestra el fallback de CUDA como aviso y no como error", () => {
+    routeEngineEvent({
+      type: "engine_log",
+      payload: {
+        level: "warning",
+        message: "CUDA no pudo activarse. Se utilizará CPU automáticamente.",
+      },
+    });
+
+    expect(useAppStore.getState().notice).toBe(
+      "CUDA no pudo activarse. Se utilizará CPU automáticamente.",
+    );
+    expect(useAppStore.getState().error).toBeNull();
   });
 
   it("conserva el texto anterior hasta que llega el primer fragmento nuevo", () => {

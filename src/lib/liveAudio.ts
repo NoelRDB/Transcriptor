@@ -10,6 +10,8 @@ const LATENCY_PROFILES: Record<LiveLatency, { minSeconds: number; maxSeconds: nu
 
 export type LiveAudioChunkHandler = (pcmBase64: string) => void;
 export type AudioLevelHandler = (level: number) => void;
+export type AudioDurationHandler = (durationMs: number) => void;
+export type AudioCaptureMode = "speech" | "recording";
 
 export class LiveAudioCapture {
   private context: AudioContext | null = null;
@@ -21,11 +23,15 @@ export class LiveAudioCapture {
   private sampleCount = 0;
   private silenceSamples = 0;
   private heardSpeech = false;
+  private totalSampleCount = 0;
+  private paused = false;
 
   constructor(
     private readonly onChunk: LiveAudioChunkHandler,
     private readonly onLevel: AudioLevelHandler,
     private readonly latency: LiveLatency = "balanced",
+    private readonly onDuration: AudioDurationHandler = () => undefined,
+    private readonly mode: AudioCaptureMode = "speech",
   ) {}
 
   async start(audioSource: LiveAudioSource = "microphone"): Promise<void> {
@@ -51,6 +57,8 @@ export class LiveAudioCapture {
     this.streams = requestedStreams;
     this.context = new AudioContext({ latencyHint: "interactive" });
     await this.context.resume();
+    this.totalSampleCount = 0;
+    this.paused = false;
     this.sources = this.streams.map((stream) => this.context!.createMediaStreamSource(stream));
     // ScriptProcessor has the broadest WebView2 support. Worklet migration is
     // isolated to this class when all supported platforms expose AudioWorklet.
@@ -59,6 +67,7 @@ export class LiveAudioCapture {
     this.silentGain = this.context.createGain();
     this.silentGain.gain.value = 0;
     this.processor.onaudioprocess = (event) => {
+      if (this.paused) return;
       const input = event.inputBuffer.getChannelData(0);
       const rms = Math.sqrt(input.reduce((sum, sample) => sum + sample * sample, 0) / input.length);
       this.onLevel(Math.min(1, rms * 7));
@@ -66,6 +75,12 @@ export class LiveAudioCapture {
       const pcm = floatToInt16(downsampled);
       this.chunks.push(pcm);
       this.sampleCount += pcm.length;
+      this.totalSampleCount += pcm.length;
+      this.onDuration(Math.round(this.totalSampleCount / TARGET_SAMPLE_RATE * 1000));
+      if (this.mode === "recording") {
+        if (this.sampleCount >= TARGET_SAMPLE_RATE) this.flush();
+        return;
+      }
       if (rms >= SPEECH_RMS) {
         this.heardSpeech = true;
         this.silenceSamples = 0;
@@ -82,6 +97,20 @@ export class LiveAudioCapture {
     this.silentGain.connect(this.context.destination);
   }
 
+  async pause(): Promise<void> {
+    if (!this.context || this.paused) return;
+    this.flush();
+    this.paused = true;
+    this.onLevel(0);
+    if (this.context.state === "running") await this.context.suspend();
+  }
+
+  async resume(): Promise<void> {
+    if (!this.context || !this.paused) return;
+    if (this.context.state === "suspended") await this.context.resume();
+    this.paused = false;
+  }
+
   async stop(flush = true): Promise<void> {
     if (flush) this.flush();
     else { this.chunks = []; this.sampleCount = 0; this.silenceSamples = 0; this.heardSpeech = false; }
@@ -96,6 +125,7 @@ export class LiveAudioCapture {
     this.sources = [];
     this.processor = null;
     this.silentGain = null;
+    this.paused = false;
     this.onLevel(0);
   }
 

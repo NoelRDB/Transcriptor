@@ -1,0 +1,1168 @@
+name: Publicar candidata SignPath v0.1.1 sin firma
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-signpath-candidate-v0.1.1
+  cancel-in-progress: false
+
+env:
+  RELEASE_VERSION: "0.1.1"
+  RELEASE_TAG: "v0.1.1"
+  TARGET_TRIPLE: "x86_64-pc-windows-msvc"
+  FFMPEG_SOURCE_COMMIT: "0869e710e6876792fbcebccb536ad620d8e65b97"
+
+jobs:
+  ffmpeg-runtime:
+    name: Construir FFmpeg LGPL y su código fuente
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+
+    steps:
+      - name: Descargar exactamente el commit solicitado de master
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Rechazar repositorios, ramas o commits ajenos
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ||
+                "$GITHUB_REPOSITORY" != "NoelRDB/Transcriptor" ||
+                "$GITHUB_REF" != "refs/heads/master" ||
+                "$GITHUB_REF_TYPE" != "branch" ]]; then
+            echo "El runtime de la candidata sólo se construye desde master del repositorio oficial." >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_VERSION" != "0.1.1" ||
+                "$RELEASE_TAG" != "v0.1.1" ]]; then
+            echo "Este workflow sólo puede construir la candidata fija v0.1.1." >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin \
+            "+refs/heads/master:refs/remotes/origin/master"
+          master_head="$(git rev-parse refs/remotes/origin/master)"
+          checkout_head="$(git rev-parse HEAD)"
+          if [[ "$checkout_head" != "$master_head" ||
+                "$GITHUB_SHA" != "$master_head" ]]; then
+            echo "El checkout no coincide con el HEAD actual de master." >&2
+            exit 1
+          fi
+
+      - name: Preparar Node.js fijado
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.3.0
+        with:
+          node-version: "22.17.0"
+          cache: npm
+
+      - name: Instalar toolchain de compilación cruzada
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            ffmpeg \
+            mingw-w64 \
+            make \
+            nasm \
+            pkg-config \
+            zip
+
+      - name: Compilar runtime y corresponding source fijados
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$version" != "$RELEASE_VERSION" ]]; then
+            echo "package.json no coincide con la candidata fija." >&2
+            exit 1
+          fi
+          bash scripts/build-ffmpeg-windows.sh \
+            "$RUNNER_TEMP/ffmpeg-build" \
+            "$version"
+
+          runtime="$RUNNER_TEMP/ffmpeg-build/ffmpeg-runtime-windows-x64.zip"
+          source="$RUNNER_TEMP/ffmpeg-build/Transcriptor-${version}-FFmpeg-corresponding-source.tar.gz"
+          mapfile -t outputs < <(find "$RUNNER_TEMP/ffmpeg-build" -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [[ "${#outputs[@]}" -ne 2 ||
+                ! -s "$runtime" ||
+                ! -s "$source" ]]; then
+            printf 'Salidas FFmpeg inesperadas:\n%s\n' "${outputs[*]}" >&2
+            exit 1
+          fi
+          bash scripts/generate-ffmpeg-fixtures.sh \
+            "$RUNNER_TEMP/ffmpeg-fixtures"
+
+      - name: Conservar runtime y código fuente como artefacto interno
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-ffmpeg-runtime-and-source
+          path: ${{ runner.temp }}/ffmpeg-build/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Conservar medios sintéticos para probar el runtime
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-ffmpeg-test-fixtures
+          path: ${{ runner.temp }}/ffmpeg-fixtures/*
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish-candidate:
+    name: Construir y publicar la candidata fija v0.1.1
+    needs: ffmpeg-runtime
+    runs-on: windows-2025
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Descargar exactamente el commit solicitado de master
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bloquear ramas, repositorios, versiones o destinos inesperados
+        id: preflight
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:GITHUB_EVENT_NAME -ne "workflow_dispatch") {
+            throw "Este flujo sólo admite ejecución manual mediante workflow_dispatch."
+          }
+          if ($env:GITHUB_REPOSITORY -cne "NoelRDB/Transcriptor") {
+            throw "Repositorio no autorizado: $env:GITHUB_REPOSITORY"
+          }
+          if ($env:GITHUB_REF -cne "refs/heads/master") {
+            throw "La candidata sólo puede construirse desde refs/heads/master."
+          }
+          if ($env:RELEASE_VERSION -cne "0.1.1" -or $env:RELEASE_TAG -cne "v0.1.1") {
+            throw "El destino fijo de este flujo es exclusivamente v0.1.1."
+          }
+
+          $Head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $Head -cne $env:GITHUB_SHA) {
+            throw "El checkout no coincide con el SHA inmutable del evento."
+          }
+
+          git fetch --no-tags origin `
+            "+refs/heads/master:refs/remotes/origin/master"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo consultar master antes de crear la candidata."
+          }
+          $RemoteMaster = (git rev-parse "refs/remotes/origin/master").Trim()
+          if ($LASTEXITCODE -ne 0 -or $RemoteMaster -cne $Head) {
+            throw "master cambió desde el despacho. Ejecuta de nuevo el workflow sobre su nuevo HEAD."
+          }
+
+          $Dirty = @(git status --porcelain=v1 --untracked-files=all)
+          if ($LASTEXITCODE -ne 0 -or $Dirty.Count -ne 0) {
+            throw "El checkout inicial no está limpio:`n$($Dirty -join "`n")"
+          }
+
+          $RemoteTag = @(
+            git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_TAG" 2>&1
+          )
+          $RemoteTagExitCode = $LASTEXITCODE
+          if ($RemoteTagExitCode -eq 0) {
+            throw "La etiqueta fija $env:RELEASE_TAG ya existe; este flujo nunca la mueve ni la sustituye."
+          }
+          if ($RemoteTagExitCode -ne 2) {
+            throw "No se pudo demostrar que la etiqueta no existe:`n$($RemoteTag -join "`n")"
+          }
+
+          $ReleaseTags = @(
+            gh api --paginate `
+              "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+              --jq '.[].tag_name'
+          )
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo consultar de forma fiable la lista de Releases."
+          }
+          if ($ReleaseTags -ccontains $env:RELEASE_TAG) {
+            throw "Ya existe una Release, incluso borrador, para $env:RELEASE_TAG."
+          }
+
+          $Package = Get-Content -LiteralPath ".\package.json" -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+          $Tauri = Get-Content -LiteralPath ".\src-tauri\tauri.conf.json" -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+          $Cargo = Get-Content -LiteralPath ".\src-tauri\Cargo.toml" -Raw -Encoding UTF8
+          $Python = Get-Content -LiteralPath ".\sidecar\pyproject.toml" -Raw -Encoding UTF8
+
+          function Get-TomlSectionVersion {
+            param(
+              [Parameter(Mandatory)]
+              [string]$Content,
+              [Parameter(Mandatory)]
+              [string]$Section
+            )
+
+            $SectionPattern = '(?ms)^\[{0}\]\s*(?<body>.*?)(?=^\[|\z)' -f
+              [regex]::Escape($Section)
+            $SectionMatch = [regex]::Match($Content, $SectionPattern)
+            if (-not $SectionMatch.Success) {
+              return $null
+            }
+            $VersionMatch = [regex]::Match(
+              $SectionMatch.Groups["body"].Value,
+              '(?m)^version\s*=\s*"(?<version>[^"]+)"\s*(?:#.*)?$'
+            )
+            if (-not $VersionMatch.Success) {
+              return $null
+            }
+            return $VersionMatch.Groups["version"].Value
+          }
+
+          $CargoVersion = Get-TomlSectionVersion -Content $Cargo -Section "package"
+          $PythonVersion = Get-TomlSectionVersion -Content $Python -Section "project"
+
+          $ManifestVersions = [ordered]@{
+            "package.json" = [string]$Package.version
+            "tauri.conf.json" = [string]$Tauri.version
+            "Cargo.toml" = if ($null -eq $CargoVersion) { "ausente" } else { $CargoVersion }
+            "pyproject.toml" = if ($null -eq $PythonVersion) { "ausente" } else { $PythonVersion }
+          }
+          $WrongVersions = @(
+            $ManifestVersions.GetEnumerator() |
+              Where-Object { $_.Value -cne $env:RELEASE_VERSION } |
+              ForEach-Object { "$($_.Key)=$($_.Value)" }
+          )
+          if ($WrongVersions.Count -ne 0) {
+            throw @"
+          Los cuatro manifiestos deben indicar exactamente 0.1.1 antes de ejecutar este flujo:
+          $($WrongVersions -join [Environment]::NewLine)
+          "@
+          }
+
+          "source_sha=$Head" >> $env:GITHUB_OUTPUT
+          "release_tag=$env:RELEASE_TAG" >> $env:GITHUB_OUTPUT
+          @"
+          ### Preflight de candidata
+
+          - Repositorio: ``$env:GITHUB_REPOSITORY``
+          - Rama verificada: ``master``
+          - Commit: ``$Head``
+          - Destino fijo: ``$env:RELEASE_TAG``
+          - Etiqueta y Release: no existentes
+          - Manifiestos: ``$env:RELEASE_VERSION``
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Preparar Node.js fijado
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.3.0
+        with:
+          node-version: "22.17.0"
+          cache: npm
+
+      - name: Preparar Rust fijado
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: "1.97.1"
+          targets: x86_64-pc-windows-msvc
+
+      - name: Preparar caché de Rust
+        uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Preparar uv y Python fijados
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.7"
+          python-version: "3.12.13"
+          enable-cache: true
+          cache-dependency-glob: sidecar/uv.lock
+
+      - name: Instalar únicamente dependencias bloqueadas
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm ci
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm ci no pudo reproducir package-lock.json."
+          }
+          uv sync --project sidecar --extra dev --locked --python "3.12.13"
+          if ($LASTEXITCODE -ne 0) {
+            throw "uv no pudo reproducir sidecar/uv.lock."
+          }
+          cargo metadata `
+            --manifest-path ".\src-tauri\Cargo.toml" `
+            --format-version 1 `
+            --no-deps `
+            --locked | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cargo.lock no coincide con Cargo.toml."
+          }
+
+      - name: Descargar FFmpeg y corresponding source del build confiable
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: candidate-ffmpeg-runtime-and-source
+          path: ${{ runner.temp }}\ffmpeg-build
+
+      - name: Descargar medios sintéticos de prueba
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: candidate-ffmpeg-test-fixtures
+          path: ${{ runner.temp }}\ffmpeg-fixtures
+
+      - name: Preparar y probar FFmpeg LGPL construido desde fuente fijada
+        id: ffmpeg-assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $BuildDirectory = Join-Path $env:RUNNER_TEMP "ffmpeg-build"
+          $ExpectedSourceName = "Transcriptor-$env:RELEASE_VERSION-FFmpeg-corresponding-source.tar.gz"
+          $RuntimeArchive = Join-Path $BuildDirectory "ffmpeg-runtime-windows-x64.zip"
+          $SourceArchive = Join-Path $BuildDirectory $ExpectedSourceName
+          $BuildFiles = @(Get-ChildItem -LiteralPath $BuildDirectory -File)
+          if (
+            $BuildFiles.Count -ne 2 -or
+            -not (Test-Path -LiteralPath $RuntimeArchive -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $SourceArchive -PathType Leaf)
+          ) {
+            throw "El build confiable debe entregar exactamente el runtime ZIP y su corresponding source."
+          }
+          if (
+            (Get-Item -LiteralPath $RuntimeArchive).Length -lt 1 -or
+            (Get-Item -LiteralPath $RuntimeArchive).Length -ge 2GB -or
+            (Get-Item -LiteralPath $SourceArchive).Length -lt 1 -or
+            (Get-Item -LiteralPath $SourceArchive).Length -ge 2GB
+          ) {
+            throw "El runtime o el código fuente está vacío o supera el límite de GitHub Releases."
+          }
+
+          ./scripts/stage-ffmpeg.ps1 -ArchivePath $RuntimeArchive
+          ./scripts/test-ffmpeg-windows.ps1 `
+            -FfmpegDirectory ".\sidecar\ffmpeg" `
+            -FixtureDirectory (Join-Path $env:RUNNER_TEMP "ffmpeg-fixtures")
+
+          $SourceManifestPath = ".\sidecar\ffmpeg\BUILD-SOURCE.txt"
+          if (-not (Test-Path -LiteralPath $SourceManifestPath -PathType Leaf)) {
+            throw "El runtime no incluye BUILD-SOURCE.txt."
+          }
+          $SourceManifest = Get-Content `
+            -LiteralPath $SourceManifestPath `
+            -Raw `
+            -Encoding UTF8
+          foreach ($RequiredBuildEvidence in @(
+            $env:FFMPEG_SOURCE_COMMIT,
+            "Corresponding source asset: $ExpectedSourceName",
+            "--disable-autodetect",
+            "--disable-network",
+            "GCC runtime license: GCC-RUNTIME-LICENSES.txt",
+            "MinGW-w64 licenses: MINGW-W64-LICENSES.txt"
+          )) {
+            if (
+              $SourceManifest.IndexOf(
+                $RequiredBuildEvidence,
+                [System.StringComparison]::Ordinal
+              ) -lt 0
+            ) {
+              throw "BUILD-SOURCE.txt no acredita: $RequiredBuildEvidence"
+            }
+          }
+          if ($SourceManifest -match "--enable-(gpl|nonfree)") {
+            throw "La configuración FFmpeg activa un componente GPL o nonfree."
+          }
+          $SourceHashMatch = [regex]::Match(
+            $SourceManifest,
+            "(?m)^Corresponding source SHA-256:\s*(?<hash>[a-f0-9]{64})\s*$"
+          )
+          $ActualSourceHash = (
+            Get-FileHash -LiteralPath $SourceArchive -Algorithm SHA256
+          ).Hash.ToLowerInvariant()
+          if (
+            -not $SourceHashMatch.Success -or
+            $SourceHashMatch.Groups["hash"].Value -cne $ActualSourceHash
+          ) {
+            throw "El corresponding source no coincide con el SHA-256 declarado por el build."
+          }
+
+          "source_archive=$SourceArchive" >> $env:GITHUB_OUTPUT
+          "source_name=$ExpectedSourceName" >> $env:GITHUB_OUTPUT
+
+      - name: Ejecutar auditoría, lint, tipos y pruebas
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./scripts/verify-release.ps1
+          npm run check
+          if ($LASTEXITCODE -ne 0) {
+            throw "Las comprobaciones del proyecto no han pasado."
+          }
+
+      - name: Construir y verificar el sidecar sin CUDA embebido
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./scripts/build-sidecar.ps1 -TargetTriple $env:TARGET_TRIPLE
+          ./scripts/verify-release.ps1 -RequireRuntimeAssets
+
+      - name: Construir NSIS y MSI expresamente sin firma
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm run tauri -- build `
+            --ci `
+            --no-sign `
+            --target $env:TARGET_TRIPLE `
+            --bundles nsis,msi `
+            -- `
+            --locked
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tauri no pudo construir ambos instaladores."
+          }
+
+      - name: Validar instaladores y preparar los cinco assets
+        id: assets
+        shell: pwsh
+        env:
+          SOURCE_ARCHIVE: ${{ steps.ffmpeg-assets.outputs.source_archive }}
+          SOURCE_NAME: ${{ steps.ffmpeg-assets.outputs.source_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $CandidateDirectory = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "release\signpath-candidate-v0.1.1"
+          if (Test-Path -LiteralPath $CandidateDirectory) {
+            throw "La carpeta de candidata debe empezar vacía en el runner limpio."
+          }
+
+          ./scripts/verify-release.ps1 `
+            -RequireRuntimeAssets `
+            -RequireInstallers `
+            -RequireInstallerPayloadInspection `
+            -StageArtifacts `
+            -ArtifactOutputDirectory $CandidateDirectory
+
+          if (
+            -not (Test-Path -LiteralPath $env:SOURCE_ARCHIVE -PathType Leaf) -or
+            [System.IO.Path]::GetFileName($env:SOURCE_ARCHIVE) -cne $env:SOURCE_NAME
+          ) {
+            throw "No se encuentra el corresponding source exacto de FFmpeg."
+          }
+          $StagedSource = Join-Path $CandidateDirectory $env:SOURCE_NAME
+          Copy-Item -LiteralPath $env:SOURCE_ARCHIVE -Destination $StagedSource
+
+          $ChecksumPath = Join-Path $CandidateDirectory "checksums-SHA256.txt"
+          $InitialChecksumLines = @(
+            Get-Content -LiteralPath $ChecksumPath -Encoding UTF8 |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+          )
+          if ($InitialChecksumLines.Count -ne 3) {
+            throw "Las sumas iniciales deben cubrir NSIS, MSI y avisos."
+          }
+          $ChecksumAssets = @(
+            Get-ChildItem -LiteralPath $CandidateDirectory -File |
+              Where-Object { $_.Name -cne "checksums-SHA256.txt" } |
+              Sort-Object Name
+          )
+          if ($ChecksumAssets.Count -ne 4) {
+            throw "Las sumas finales deben cubrir exactamente cuatro assets."
+          }
+          $ChecksumLines = @(
+            $ChecksumAssets |
+              ForEach-Object {
+                $Hash = (
+                  Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+                ).Hash.ToLowerInvariant()
+                "$Hash  $($_.Name)"
+              }
+          )
+          [System.IO.File]::WriteAllLines(
+            $ChecksumPath,
+            $ChecksumLines,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          $Files = @(Get-ChildItem -LiteralPath $CandidateDirectory -File)
+          $Nsis = @($Files | Where-Object { $_.Name -like "*-setup.exe" })
+          $Msi = @($Files | Where-Object { $_.Extension -ieq ".msi" })
+          $Checksums = @($Files | Where-Object { $_.Name -ceq "checksums-SHA256.txt" })
+          $Notices = @($Files | Where-Object { $_.Name -ceq "THIRD_PARTY_NOTICES.md" })
+          $Sources = @($Files | Where-Object { $_.Name -ceq $env:SOURCE_NAME })
+          if (
+            $Files.Count -ne 5 -or
+            $Nsis.Count -ne 1 -or
+            $Msi.Count -ne 1 -or
+            $Checksums.Count -ne 1 -or
+            $Notices.Count -ne 1 -or
+            $Sources.Count -ne 1
+          ) {
+            throw "La candidata debe contener exactamente NSIS, MSI, checksums, avisos y corresponding source."
+          }
+
+          foreach ($Installer in @($Nsis[0], $Msi[0])) {
+            if ($Installer.Name -notmatch [regex]::Escape($env:RELEASE_VERSION)) {
+              throw "El instalador no contiene la versión 0.1.1 en su nombre: $($Installer.Name)"
+            }
+            $Signature = Get-AuthenticodeSignature -LiteralPath $Installer.FullName
+            if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "La candidata debe estar sin firma, pero $($Installer.Name) indica $($Signature.Status)."
+            }
+          }
+
+          $ChecksumLines = @(
+            Get-Content -LiteralPath $Checksums[0].FullName -Encoding UTF8 |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+          )
+          $HashedAssets = @(
+            @($Nsis[0], $Msi[0], $Notices[0], $Sources[0]) |
+              Sort-Object Name
+          )
+          if ($ChecksumLines.Count -ne 4 -or $HashedAssets.Count -ne 4) {
+            throw "checksums-SHA256.txt debe cubrir exactamente NSIS, MSI, avisos y corresponding source."
+          }
+          for ($Index = 0; $Index -lt $HashedAssets.Count; $Index++) {
+            $HashedAsset = $HashedAssets[$Index]
+            $Hash = (
+              Get-FileHash -LiteralPath $HashedAsset.FullName -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            $ExpectedLine = "$Hash  $($HashedAsset.Name)"
+            if ($ChecksumLines[$Index] -cne $ExpectedLine) {
+              throw "La lÃ­nea SHA-256 de $($HashedAsset.Name) falta, no coincide o estÃ¡ fuera del orden determinista por nombre."
+            }
+          }
+
+          $SourceNoticesHash = (
+            Get-FileHash `
+              -LiteralPath ".\docs\THIRD_PARTY_NOTICES.md" `
+              -Algorithm SHA256
+          ).Hash
+          $StagedNoticesHash = (
+            Get-FileHash -LiteralPath $Notices[0].FullName -Algorithm SHA256
+          ).Hash
+          if ($SourceNoticesHash -cne $StagedNoticesHash) {
+            throw "Los avisos adjuntos no coinciden con los auditados en el commit."
+          }
+
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) {
+            throw "La construcción modificó archivos versionados."
+          }
+          $UnexpectedFiles = @(git ls-files --others --exclude-standard)
+          if ($LASTEXITCODE -ne 0 -or $UnexpectedFiles.Count -ne 0) {
+            throw "Aparecieron archivos publicables no versionados:`n$($UnexpectedFiles -join "`n")"
+          }
+
+          "directory=$CandidateDirectory" >> $env:GITHUB_OUTPUT
+          "nsis_name=$($Nsis[0].Name)" >> $env:GITHUB_OUTPUT
+          "msi_name=$($Msi[0].Name)" >> $env:GITHUB_OUTPUT
+          @"
+          ### Binarios locales verificados
+
+          - NSIS sin firma: ``$($Nsis[0].Name)``
+          - MSI sin firma: ``$($Msi[0].Name)``
+          - Corresponding source: ``$($Sources[0].Name)``
+          - SHA-256: instaladores y fuente recalculados y coincidentes
+          - Avisos de terceros: coincidentes con el commit
+          - CUDA embebido: rechazado por ``verify-release.ps1``
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Revalidar el destino fijo antes de crear referencias
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.preflight.outputs.source_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_VERSION -cne "0.1.1" -or $env:RELEASE_TAG -cne "v0.1.1") {
+            throw "El destino de publicación fue alterado después del preflight."
+          }
+          $CurrentHead = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $CurrentHead -cne $env:SOURCE_SHA) {
+            throw "El checkout ya no coincide con el commit candidato validado."
+          }
+
+          $RemoteTag = @(
+            git ls-remote --exit-code --tags origin "refs/tags/$env:RELEASE_TAG" 2>&1
+          )
+          $RemoteTagExitCode = $LASTEXITCODE
+          if ($RemoteTagExitCode -eq 0) {
+            throw "La etiqueta apareció durante la compilación; no se moverá ni sustituirá."
+          }
+          if ($RemoteTagExitCode -ne 2) {
+            throw "No se pudo revalidar la ausencia de la etiqueta."
+          }
+
+          $ReleaseTags = @(
+            gh api --paginate `
+              "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+              --jq '.[].tag_name'
+          )
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo revalidar la lista de Releases."
+          }
+          if ($ReleaseTags -ccontains $env:RELEASE_TAG) {
+            throw "Una Release para v0.1.1 apareció durante la compilación."
+          }
+
+          git fetch --no-tags origin `
+            "+refs/heads/master:refs/remotes/origin/master"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo revalidar master."
+          }
+          $CurrentMaster = (git rev-parse "refs/remotes/origin/master").Trim()
+          if (
+            $LASTEXITCODE -ne 0 -or
+            $CurrentMaster -cne $env:SOURCE_SHA
+          ) {
+            throw "master cambió durante la compilación; vuelve a ejecutar la candidata sobre su nuevo HEAD."
+          }
+
+      - name: Crear la etiqueta fija y la Release en borrador
+        id: draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.preflight.outputs.source_sha }}
+          SOURCE_NAME: ${{ steps.ffmpeg-assets.outputs.source_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_VERSION -cne "0.1.1" -or $env:RELEASE_TAG -cne "v0.1.1") {
+            throw "El destino de publicación dejó de ser el único permitido."
+          }
+          if ($env:SOURCE_SHA -notmatch "^[0-9a-f]{40}$") {
+            throw "El commit candidato no tiene un SHA-1 completo y válido."
+          }
+          if (
+            $env:SOURCE_NAME -cne
+              "Transcriptor-0.1.1-FFmpeg-corresponding-source.tar.gz"
+          ) {
+            throw "El código fuente correspondiente no tiene el nombre fijo autorizado."
+          }
+          git fetch --no-tags origin `
+            "+refs/heads/master:refs/remotes/origin/master"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo revalidar master antes de crear la etiqueta."
+          }
+          $CurrentMaster = (git rev-parse "refs/remotes/origin/master").Trim()
+          if (
+            $LASTEXITCODE -ne 0 -or
+            $CurrentMaster -cne $env:SOURCE_SHA
+          ) {
+            throw "La candidata ya no coincide con el HEAD actual de master."
+          }
+
+          $TagResponseRaw = gh api `
+            --method POST `
+            "repos/$env:GITHUB_REPOSITORY/git/refs" `
+            -f "ref=refs/tags/v0.1.1" `
+            -f "sha=$env:SOURCE_SHA"
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub rechazó la creación nueva y no forzada de la etiqueta fija."
+          }
+          $TagResponse = $TagResponseRaw | ConvertFrom-Json
+          if (
+            $TagResponse.ref -cne "refs/tags/$env:RELEASE_TAG" -or
+            $TagResponse.object.type -cne "commit" -or
+            $TagResponse.object.sha -cne $env:SOURCE_SHA
+          ) {
+            throw "La etiqueta creada no apunta exactamente al commit candidato."
+          }
+
+          $NotesPath = Join-Path $env:RUNNER_TEMP "v0.1.1-release-notes.md"
+          $Notes = @"
+          ## Candidata de evaluación SignPath — SIN FIRMA AUTHENTICODE
+
+          Esta Release pública ``v0.1.1`` se distribuye **sin firma de editor** para que
+          SignPath Foundation pueda evaluar el proyecto en la misma forma que se desea
+          firmar posteriormente. SignPath Foundation todavía no ha aprobado ni firmado
+          Transcriptor. Tanto NSIS/MSI como ``Transcriptor.exe``, el sidecar y
+          los DLL instalados permanecen sin firma Authenticode.
+
+          ### Qué incluye
+
+          - Aplicación completa para Windows 10/11 x64.
+          - Motor local completo para CPU, Python, FFmpeg y FFprobe.
+          - Instaladores NSIS y MSI, sumas SHA-256 y avisos de terceros.
+          - FFmpeg y FFprobe compilados desde el commit fijado
+            ``$env:FFMPEG_SOURCE_COMMIT`` con configuración LGPLv3, sin red ni
+            bibliotecas externas.
+          - Código fuente correspondiente exacto de FFmpeg adjunto como
+            ``$env:SOURCE_NAME``.
+          - WebView2 es un requisito del sistema que Windows 10/11 normalmente
+            ya incluye. Tauri usa el modo skip. El instalador no contiene ni
+            descarga su bootstrapper;
+            si falta, debe instalarse desde la
+            [página oficial de Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+          ### GPU NVIDIA
+
+          El instalador **no incluye CUDA, cuBLAS ni cuDNN**. Si se detecta una GPU NVIDIA,
+          la aplicación puede descargar el runtime opcional sólo después de mostrar su
+          tamaño y recibir consentimiento explícito. La descarga admite progreso,
+          cancelación y reintento, y se valida con SHA-256. Rechazarla mantiene el modo CPU
+          completamente funcional.
+
+          ### Privacidad
+
+          La candidata se construyó desde un clon limpio de GitHub y no contiene datos de usuario:
+          no incluye grabaciones, vídeos, transcripciones, proyectos, perfiles de
+          voz, modelos descargados, caché ni bases de datos. El procesamiento es local y
+          ningún contenido se envía a SignPath.
+
+          - Commit de origen: ``$env:SOURCE_SHA``
+          - Workflow manual fijo: ``$env:GITHUB_WORKFLOW``
+          - Ejecución: ``$env:GITHUB_RUN_ID``
+
+          GitHub genera una atestación Sigstore de procedencia para cada uno de
+          los cinco assets finales. Se puede comprobar con
+          ``gh attestation verify <archivo> -R NoelRDB/Transcriptor``. Esta
+          evidencia gratuita vincula hash, repositorio y workflow, pero **no
+          sustituye Authenticode, el editor de Windows ni SmartScreen**.
+
+          ## Code signing policy
+
+          SignPath Foundation aún no ha aprobado ni firmado Transcriptor. Esta candidata
+          permanece sin firma y se publica únicamente para su evaluación. Consulta la
+          [política de firma](https://github.com/NoelRDB/Transcriptor/blob/$env:SOURCE_SHA/docs/CODE_SIGNING_POLICY.md).
+
+          La siguiente atribución se incluye sólo como texto de la política: aparecerá
+          únicamente en futuras releases que hayan sido firmadas y verificadas, y no
+          describe esta candidata:
+
+          > Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
+
+          Verifica los instaladores con ``checksums-SHA256.txt`` antes de ejecutarlos.
+          "@
+          [System.IO.File]::WriteAllText(
+            $NotesPath,
+            $Notes,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          gh release create "v0.1.1" `
+            --verify-tag `
+            --draft `
+            --prerelease `
+            --title "Transcriptor v0.1.1 - candidata SignPath sin firma" `
+            --notes-file $NotesPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo crear la Release en borrador. La etiqueta fija puede requerir revisión manual."
+          }
+
+          $ReleaseRaw = gh api `
+            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo recuperar el borrador recién creado."
+          }
+          $Release = $ReleaseRaw | ConvertFrom-Json
+          if (
+            -not $Release.draft -or
+            -not $Release.prerelease -or
+            $Release.tag_name -cne "v0.1.1" -or
+            @($Release.assets).Count -ne 0
+          ) {
+            throw "La Release debe empezar como prerelease en borrador y sin assets."
+          }
+
+          "release_id=$($Release.id)" >> $env:GITHUB_OUTPUT
+          "release_url=$($Release.html_url)" >> $env:GITHUB_OUTPUT
+          "Borrador privado creado: $($Release.html_url)" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Adjuntar los cinco assets sin reemplazos
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_DIRECTORY: ${{ steps.assets.outputs.directory }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_TAG -cne "v0.1.1") {
+            throw "La subida sólo admite el borrador fijo v0.1.1."
+          }
+          $Release = (
+            gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
+          ) | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $Release.draft) {
+            throw "La subida sólo está permitida mientras la Release sea borrador."
+          }
+          if (@($Release.assets).Count -ne 0) {
+            throw "El borrador nuevo debe estar vacío; no se reemplazará ningún asset."
+          }
+
+          $AssetPaths = @(
+            Get-ChildItem -LiteralPath $env:CANDIDATE_DIRECTORY -File |
+              Sort-Object Name |
+              Select-Object -ExpandProperty FullName
+          )
+          if ($AssetPaths.Count -ne 5) {
+            throw "Se esperaban exactamente cinco assets locales."
+          }
+          & gh release upload "v0.1.1" @AssetPaths
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudieron adjuntar todos los assets al borrador."
+          }
+
+      - name: Cotejar los assets remotos sin publicar
+        id: release_metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_DIRECTORY: ${{ steps.assets.outputs.directory }}
+          SOURCE_SHA: ${{ steps.preflight.outputs.source_sha }}
+          SOURCE_NAME: ${{ steps.ffmpeg-assets.outputs.source_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_TAG -cne "v0.1.1") {
+            throw "La validación sólo admite el borrador fijo v0.1.1."
+          }
+          $ReleaseRaw = gh api `
+            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo recuperar el borrador para cotejar sus assets."
+          }
+          $Release = $ReleaseRaw | ConvertFrom-Json
+          if (-not $Release.draft -or -not $Release.prerelease) {
+            throw "La Release dejó de ser un borrador privado durante la validación."
+          }
+          if (
+            [string]$Release.name -cne
+              "Transcriptor v0.1.1 - candidata SignPath sin firma"
+          ) {
+            throw "El título del borrador no coincide con la candidata autorizada."
+          }
+
+          $LocalAssets = @(
+            Get-ChildItem -LiteralPath $env:CANDIDATE_DIRECTORY -File
+          )
+          $RemoteAssets = @($Release.assets)
+          if (
+            $LocalAssets.Count -ne 5 -or
+            $RemoteAssets.Count -ne 5 -or
+            @($LocalAssets | Where-Object { $_.Name -ceq $env:SOURCE_NAME }).Count -ne 1
+          ) {
+            throw "Deben existir exactamente cinco assets locales y cinco remotos."
+          }
+
+          foreach ($LocalAsset in $LocalAssets) {
+            $Matches = @(
+              $RemoteAssets | Where-Object { $_.name -ceq $LocalAsset.Name }
+            )
+            if ($Matches.Count -ne 1) {
+              throw "Asset remoto ausente o duplicado: $($LocalAsset.Name)"
+            }
+            $RemoteAsset = $Matches[0]
+            if ($RemoteAsset.state -cne "uploaded") {
+              throw "GitHub no terminó de almacenar $($LocalAsset.Name)."
+            }
+            if ([long]$RemoteAsset.size -ne [long]$LocalAsset.Length) {
+              throw "El tamaño remoto no coincide para $($LocalAsset.Name)."
+            }
+            $LocalHash = (
+              Get-FileHash -LiteralPath $LocalAsset.FullName -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            $LocalDigest = "sha256:$LocalHash"
+            if ([string]$RemoteAsset.digest -cne $LocalDigest) {
+              throw "El digest remoto no coincide para $($LocalAsset.Name)."
+            }
+          }
+
+          foreach ($RequiredText in @(
+            "SIN FIRMA AUTHENTICODE",
+            "Tanto NSIS/MSI como ``Transcriptor.exe``, el sidecar y",
+            "los DLL instalados permanecen sin firma Authenticode",
+            "Candidata de evaluación SignPath",
+            "Motor local completo para CPU",
+            "Código fuente correspondiente exacto de FFmpeg adjunto como",
+            "$env:SOURCE_NAME",
+            "consentimiento explícito",
+            "no contiene datos de usuario",
+            "gh attestation verify <archivo> -R NoelRDB/Transcriptor",
+            "no sustituye Authenticode, el editor de Windows ni SmartScreen",
+            "Tauri usa el modo skip",
+            "El instalador no contiene ni descarga su bootstrapper",
+            "https://developer.microsoft.com/microsoft-edge/webview2/",
+            "## Code signing policy",
+            "SignPath Foundation aún no ha aprobado ni firmado Transcriptor",
+            "https://github.com/NoelRDB/Transcriptor/blob/${env:SOURCE_SHA}/docs/CODE_SIGNING_POLICY.md",
+            "Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)",
+            "únicamente en futuras releases que hayan sido firmadas y verificadas"
+          )) {
+            if (
+              ([string]$Release.body).IndexOf(
+                $RequiredText,
+                [System.StringComparison]::Ordinal
+              ) -lt 0
+            ) {
+              throw "La descripción pública carece del texto obligatorio: $RequiredText"
+            }
+          }
+          $BodyBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Release.body)
+          $BodyHasher = [System.Security.Cryptography.SHA256]::Create()
+          try {
+            $BodySha256 = [System.BitConverter]::ToString(
+              $BodyHasher.ComputeHash($BodyBytes)
+            ).Replace("-", "").ToLowerInvariant()
+          }
+          finally {
+            $BodyHasher.Dispose()
+          }
+          "body_sha256=$BodySha256" >> $env:GITHUB_OUTPUT
+          "Los cinco assets remotos coinciden por nombre, tamaño y SHA-256." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Atestar la procedencia de los cinco assets finales
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: |
+            release/signpath-candidate-v0.1.1/*-setup.exe
+            release/signpath-candidate-v0.1.1/*.msi
+            release/signpath-candidate-v0.1.1/checksums-SHA256.txt
+            release/signpath-candidate-v0.1.1/THIRD_PARTY_NOTICES.md
+            release/signpath-candidate-v0.1.1/Transcriptor-0.1.1-FFmpeg-corresponding-source.tar.gz
+
+      - name: Puerta final y publicación atómica
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.preflight.outputs.source_sha }}
+          CANDIDATE_DIRECTORY: ${{ steps.assets.outputs.directory }}
+          EXPECTED_RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          EXPECTED_BODY_SHA256: ${{ steps.release_metadata.outputs.body_sha256 }}
+          SOURCE_NAME: ${{ steps.ffmpeg-assets.outputs.source_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_VERSION -cne "0.1.1" -or $env:RELEASE_TAG -cne "v0.1.1") {
+            throw "La puerta final sólo puede publicar v0.1.1."
+          }
+          if ($env:EXPECTED_RELEASE_ID -notmatch "^\d+$") {
+            throw "El identificador del borrador no es válido."
+          }
+
+          ./scripts/verify-release.ps1 `
+            -RequireRuntimeAssets `
+            -RequireInstallers `
+            -RequireInstallerPayloadInspection `
+            -InstallerDirectory $env:CANDIDATE_DIRECTORY
+
+          $LocalInstallers = @(
+            Get-ChildItem -LiteralPath $env:CANDIDATE_DIRECTORY -File |
+              Where-Object {
+                $_.Name -like "*-setup.exe" -or $_.Extension -ieq ".msi"
+              }
+          )
+          if ($LocalInstallers.Count -ne 2) {
+            throw "La puerta final exige exactamente NSIS y MSI."
+          }
+          foreach ($Installer in $LocalInstallers) {
+            $Signature = Get-AuthenticodeSignature -LiteralPath $Installer.FullName
+            if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+              throw "La candidata dejó de ser explícitamente no firmada: $($Installer.Name)"
+            }
+          }
+
+          $TagRefRaw = gh api `
+            "repos/$env:GITHUB_REPOSITORY/git/ref/tags/v0.1.1"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo verificar la etiqueta antes de publicar."
+          }
+          $TagRef = $TagRefRaw | ConvertFrom-Json
+          if (
+            $TagRef.object.type -cne "commit" -or
+            $TagRef.object.sha -cne $env:SOURCE_SHA
+          ) {
+            throw "La etiqueta fue movida o ya no apunta al commit candidato."
+          }
+
+          git fetch --no-tags origin `
+            "+refs/heads/master:refs/remotes/origin/master"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo comprobar el historial actual de master."
+          }
+          $CurrentMaster = (git rev-parse "refs/remotes/origin/master").Trim()
+          if (
+            $LASTEXITCODE -ne 0 -or
+            $CurrentMaster -cne $env:SOURCE_SHA
+          ) {
+            throw "La candidata ya no coincide con el HEAD actual de master."
+          }
+
+          $ReleaseRaw = gh api `
+            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
+          if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo recuperar la Release en la puerta final."
+          }
+          $Release = $ReleaseRaw | ConvertFrom-Json
+          if (
+            [string]$Release.id -cne $env:EXPECTED_RELEASE_ID -or
+            -not $Release.draft -or
+            -not $Release.prerelease -or
+            $Release.tag_name -cne "v0.1.1" -or
+            [string]$Release.name -cne
+              "Transcriptor v0.1.1 - candidata SignPath sin firma"
+          ) {
+            throw "El borrador cambió de identidad o estado."
+          }
+          $BodyBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Release.body)
+          $BodyHasher = [System.Security.Cryptography.SHA256]::Create()
+          try {
+            $BodySha256 = [System.BitConverter]::ToString(
+              $BodyHasher.ComputeHash($BodyBytes)
+            ).Replace("-", "").ToLowerInvariant()
+          }
+          finally {
+            $BodyHasher.Dispose()
+          }
+          if (
+            $env:EXPECTED_BODY_SHA256 -notmatch "^[0-9a-f]{64}$" -or
+            $BodySha256 -cne $env:EXPECTED_BODY_SHA256
+          ) {
+            throw "La descripción validada del borrador cambió antes de publicar."
+          }
+
+          $LocalAssets = @(
+            Get-ChildItem -LiteralPath $env:CANDIDATE_DIRECTORY -File
+          )
+          $RemoteAssets = @($Release.assets)
+          $LocalSources = @(
+            $LocalAssets | Where-Object { $_.Name -ceq $env:SOURCE_NAME }
+          )
+          if (
+            $LocalAssets.Count -ne 5 -or
+            $RemoteAssets.Count -ne 5 -or
+            $LocalSources.Count -ne 1
+          ) {
+            throw "La puerta final exige exactamente cinco assets."
+          }
+          $ChecksumAssets = @(
+            $LocalAssets |
+              Where-Object { $_.Name -ceq "checksums-SHA256.txt" }
+          )
+          if ($ChecksumAssets.Count -ne 1) {
+            throw "La puerta final exige un único archivo de sumas SHA-256."
+          }
+          $ChecksumLines = @(
+            Get-Content -LiteralPath $ChecksumAssets[0].FullName -Encoding UTF8 |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+          )
+          $HashedAssets = @(
+            $LocalAssets |
+              Where-Object { $_.Name -cne "checksums-SHA256.txt" } |
+              Sort-Object Name
+          )
+          if ($ChecksumLines.Count -ne 4 -or $HashedAssets.Count -ne 4) {
+            throw "Las sumas deben cubrir exactamente NSIS, MSI, avisos y corresponding source."
+          }
+          for ($Index = 0; $Index -lt $HashedAssets.Count; $Index++) {
+            $HashedAsset = $HashedAssets[$Index]
+            $Hash = (
+              Get-FileHash -LiteralPath $HashedAsset.FullName -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            $ExpectedLine = "$Hash  $($HashedAsset.Name)"
+            if ($ChecksumLines[$Index] -cne $ExpectedLine) {
+              throw "La lÃ­nea SHA-256 de $($HashedAsset.Name) falta, no coincide o estÃ¡ fuera del orden determinista por nombre."
+            }
+          }
+          foreach ($LocalAsset in $LocalAssets) {
+            $RemoteAsset = @(
+              $RemoteAssets | Where-Object { $_.name -ceq $LocalAsset.Name }
+            )
+            if ($RemoteAsset.Count -ne 1) {
+              throw "Asset inesperado en la puerta final: $($LocalAsset.Name)"
+            }
+            $ExpectedHash = (
+              Get-FileHash -LiteralPath $LocalAsset.FullName -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            $ExpectedDigest = "sha256:$ExpectedHash"
+            if (
+              [long]$RemoteAsset[0].size -ne [long]$LocalAsset.Length -or
+              [string]$RemoteAsset[0].digest -cne $ExpectedDigest -or
+              [string]$RemoteAsset[0].state -cne "uploaded"
+            ) {
+              throw "El asset remoto cambió antes de publicar: $($LocalAsset.Name)"
+            }
+          }
+
+          $PublishedRaw = gh api `
+            --method PATCH `
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:EXPECTED_RELEASE_ID" `
+            -F "draft=false" `
+            -F "prerelease=true" `
+            -f "make_latest=false"
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub rechazó la publicación final."
+          }
+          $Published = $PublishedRaw | ConvertFrom-Json
+          $PublishedBodyBytes = [System.Text.Encoding]::UTF8.GetBytes(
+            [string]$Published.body
+          )
+          $PublishedBodyHasher = [System.Security.Cryptography.SHA256]::Create()
+          try {
+            $PublishedBodySha256 = [System.BitConverter]::ToString(
+              $PublishedBodyHasher.ComputeHash($PublishedBodyBytes)
+            ).Replace("-", "").ToLowerInvariant()
+          }
+          finally {
+            $PublishedBodyHasher.Dispose()
+          }
+          if (
+            $Published.draft -or
+            -not $Published.prerelease -or
+            $Published.tag_name -cne "v0.1.1" -or
+            @($Published.assets).Count -ne 5 -or
+            $PublishedBodySha256 -cne $env:EXPECTED_BODY_SHA256
+          ) {
+            throw "La respuesta de publicación no coincide con la candidata validada."
+          }
+
+          @"
+          ### Candidata publicada
+
+          - URL: $($Published.html_url)
+          - Etiqueta fija: ``$env:RELEASE_TAG``
+          - Commit: ``$env:SOURCE_SHA``
+          - Estado: prerelease pública, sin firma Authenticode
+          - Assets: NSIS, MSI, checksums, avisos y corresponding source verificados
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Confirmar cierre seguro si una etapa falla
+        if: ${{ failure() }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ReleaseRaw = gh api `
+            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1" 2>$null
+          $ReleaseExitCode = $LASTEXITCODE
+          if ($ReleaseExitCode -ne 0) {
+            $TagRaw = gh api `
+              "repos/$env:GITHUB_REPOSITORY/git/ref/tags/v0.1.1" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Warning "No existe Release, pero la etiqueta fija v0.1.1 puede haber quedado creada; no se moverá ni eliminará automáticamente."
+            }
+            else {
+              Write-Host "No existe Release ni etiqueta v0.1.1 creadas por este intento."
+            }
+            exit 0
+          }
+          $Release = $ReleaseRaw | ConvertFrom-Json
+          if ($Release.draft) {
+            Write-Host "Fallo cerrado: la candidata permanece como borrador privado."
+            exit 0
+          }
+          Write-Error "La Release aparece pública pese al fallo; revísala inmediatamente."

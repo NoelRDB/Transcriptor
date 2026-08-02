@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<artifact-configuration
+  xmlns="http://signpath.io/artifact-configuration/v1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://signpath.io/artifact-configuration/v1 https://app.signpath.io/Web/artifact-configuration/v1.xsd">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <!-- Firma solo el contenedor NSIS final. No vuelve a firmar binarios incluidos. -->
+    <pe-file
+      path="*-setup.exe"
+      product-name="Transcriptor"
+      product-version="${version}"
+      file-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+
+    <!-- Firma solo el paquete MSI final. No aplica firma profunda a su payload. -->
+    <msi-file path="*.msi" subject="Transcriptor" author="transcriptor">
+      <authenticode-sign />
+    </msi-file>
+  </zip-file>
+</artifact-configuration>

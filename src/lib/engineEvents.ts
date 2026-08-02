@@ -6,6 +6,16 @@ import type { EngineEvent, JobProgress, TranscriptSegment, VoiceProfileCatalog, 
 export function routeEngineEvent(event: EngineEvent): void {
   const state = useAppStore.getState();
   const payload = event.payload as Record<string, any>;
+  if (event.type === "engine_log") {
+    const level = String(payload.level ?? "info");
+    const message = String(payload.message ?? "").trim();
+    if (message && level === "error") {
+      state.setError(message);
+    } else if (message && level === "warning") {
+      state.setNotice(message);
+    }
+    return;
+  }
   if (!shouldRouteEngineEvent(event.type, event.payload, state.project?.id)) return;
   if (event.type === "voice_profiles_updated") {
     state.setVoiceProfiles((event.payload as VoiceProfileCatalog).profiles ?? []);

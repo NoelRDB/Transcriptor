@@ -11,27 +11,93 @@ El usuario final no necesita Python, Node, Rust ni FFmpeg instalados.
 
 ## FFmpeg
 
-El repositorio no versiona binarios de FFmpeg. Antes de una distribución oficial hay que obtener una compilación Windows x64 estática compatible con redistribución LGPL que incluya `ffmpeg.exe` y `ffprobe.exe`.
+El repositorio no versiona binarios. El workflow construye FFmpeg y FFprobe
+para Windows x64 desde el commit exacto
+`0869e710e6876792fbcebccb536ad620d8e65b97` con MinGW-w64 en Ubuntu 24.04:
 
-```powershell
-.\scripts\stage-ffmpeg.ps1 -ArchivePath C:\descargas\ffmpeg-lgpl-shared.zip
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends \
+  ffmpeg git mingw-w64 make nasm pkg-config zip
+version="$(node -p "require('./package.json').version")"
+bash scripts/build-ffmpeg-windows.sh build/ffmpeg "$version"
 ```
 
-El script sólo extrae rutas verificadas dentro de un directorio temporal, copia ambos ejecutables y elimina ese temporal. `build-sidecar.ps1` los incluye dentro del sidecar. Revisa las opciones de compilación del proveedor: una compilación que active componentes GPL cambia las obligaciones de distribución.
+La configuración desactiva autodetección, red, GPL, `nonfree`, x264/x265 y
+bibliotecas externas. Conserva los decodificadores/demuxers internos y habilita
+explícitamente PCM S16LE, AAC, MPEG-4, WAV/MP4 y los filtros usados por la
+edición. El script audita las DLL importadas y genera exactamente:
 
-Para automatización existe un segundo script que exige HTTPS y una suma SHA-256:
+- `ffmpeg-runtime-windows-x64.zip`, con `ffmpeg.exe`, `ffprobe.exe`,
+  `LICENSE.txt`, `BUILD-SOURCE.txt`, `GCC-RUNTIME-LICENSES.txt` y
+  `MINGW-W64-LICENSES.txt`;
+- `Transcriptor-<versión>-FFmpeg-corresponding-source.tar.gz`, con el árbol
+  FFmpeg exacto, instrucciones y el propio script de compilación.
+
+`BUILD-SOURCE.txt` liga ambos artefactos mediante el nombre y SHA-256 del
+código fuente correspondiente. El workflow comprueba ese hash antes de
+publicar y adjunta el `.tar.gz` a la misma Release que los instaladores.
+
+En Windows, el ZIP interno se prepara así:
 
 ```powershell
-.\scripts\fetch-ffmpeg.ps1 `
-  -Url https://github.com/BtbN/FFmpeg-Builds/releases/download/<tag-exacto>/ffmpeg-<versión>-win64-lgpl.zip `
-  -Sha256 <64-caracteres-hexadecimales>
+.\scripts\stage-ffmpeg.ps1 `
+  -ArchivePath .\build\ffmpeg\ffmpeg-runtime-windows-x64.zip
 ```
 
-No uses la URL flotante `latest` en una publicación: el contenido puede cambiar sin que cambie la dirección. El flujo de GitHub conserva una compilación LGPL exacta y su SHA-256 como valor reproducible. Si hay que actualizarla, `FFMPEG_ARCHIVE_URL` y `FFMPEG_ARCHIVE_SHA256` en **Settings → Secrets and variables → Actions → Variables** permiten sustituir ambos valores sin debilitar la comprobación. Además, el flujo rechaza automáticamente compilaciones que declaren `--enable-gpl` o `--enable-nonfree`.
+El script rechaza cualquier ZIP que no tenga esas seis entradas raíz exactas,
+limita sus tamaños, valida LGPL v3, la GCC Runtime Library Exception, los
+términos CRT de MinGW-w64 y el manifiesto de fuente y sólo
+entonces copia el runtime a `sidecar\ffmpeg`. No usa rutas internas del ZIP
+como destinos.
+
+La CI genera medios sintéticos y ejecuta el binario Windows contra MP3, WAV,
+M4A, AAC, FLAC, OGG, OPUS, MP4, MOV, MKV, AVI, WEBM y M4V. También prueba el
+comando real de extracción PCM mono a 16 kHz y la edición con remuestreo,
+`trim`/`atrim`, `setpts`/`asetpts`, `concat`, MPEG-4, AAC, WAV y MP4.
+
+## Runtime CTranslate2 CPU
+
+El instalador no acepta el DLL del *wheel* binario oficial de CTranslate2. La
+cadena de publicación construye un runtime Windows x64 desde fuentes fijadas
+de CTranslate2, oneDNN y LLVM, con CUDA, cuDNN y oneMKL desactivados. La
+inferencia CPU usa oneDNN y la paralelización usa `libomp.dll`, el runtime
+abierto LLVM OpenMP.
+
+El artefacto intermedio contiene los DLL fijados de CTranslate2, oneDNN y LLVM
+OpenMP, sus licencias y `CTRANSLATE2-OSS-RUNTIME.json`. El marcador enlaza cada
+DLL con su SHA-256 y tamaño, los commits de CTranslate2, oneDNN, LLVM y
+submódulos y todas las opciones de compilación relevantes.
+`build-sidecar.ps1` sólo empaqueta ese conjunto exacto si el marcador coincide.
+
+`verify-release.ps1` vuelve a comprobar el marcador y los hashes tanto antes
+de empaquetar como dentro del archivo PyInstaller. También audita las
+importaciones PE y rechaza DLL o importaciones de CUDA, NVIDIA, oneMKL, Intel
+OpenMP, `libiomp` o Visual C++ OpenMP. CTranslate2 conserva mensajes
+diagnósticos que dicen explícitamente que CUDA/oneMKL no se compilaron y el
+identificador del fabricante de CPU; buscar palabras sueltas produciría
+falsos positivos y no sustituye la procedencia criptográfica. La aceleración GPU
+se mantiene como instalación opcional posterior y nunca reutiliza el runtime
+CPU del instalador para justificar componentes propietarios.
+
+`build-sidecar.ps1` incorpora los ejecutables y recopila los avisos mediante
+`collect-runtime-licenses.ps1`. El inventario cerrado impide incluir PyAV o
+dependencias de desarrollo; las rutas se conservan para evitar colisiones y
+`PYTHON-RUNTIME-LICENSES.json` registra cada SHA-256. Además se empaquetan
+GPL-3.0, LGPL-3.0, el aviso FFmpeg, su manifiesto de fuente, las licencias del
+runtime GCC/MinGW-w64, las licencias del runtime CTranslate2/oneDNN/LLVM y su
+marcador de procedencia. `verify-release.ps1`
+exige que inventario, archivos y hashes coincidan antes de construir
+instaladores.
 
 ## Firma
 
-Los instaladores de producción deben firmarse con un certificado de firma de código. La configuración actual genera instaladores sin firma para pruebas internas. No almacenes certificados o contraseñas en el repositorio.
+La Release pública `v0.1.0` se generó sin firma y conserva CUDA dentro de sus
+instaladores heredados; no es candidata a una firma retroactiva. La
+configuración actual de `master` prepara una futura candidata sin CUDA
+embebido, pero seguirá siendo no firmada hasta que SignPath Foundation apruebe
+el proyecto y se verifique una integración real. No almacenes certificados o
+contraseñas en el repositorio.
 
 Hasta que se configure la firma, Windows puede mostrar SmartScreen. Esto no impide instalar, pero una publicación dirigida a usuarios no técnicos debería incorporar un certificado antes de anunciarse como estable.
 
@@ -43,14 +109,33 @@ npm run package:windows
 
 El script se detiene si faltan Rust, Cargo, `uv`, npm o FFmpeg. Ejecuta todas las pruebas antes de compilar Tauri, verifica que Git no contenga datos privados y deja NSIS, MSI y `checksums-SHA256.txt` dentro de `release/`.
 
+El workflow genera una atestación Sigstore de GitHub para cada uno de los cinco
+assets finales, después de validar sus hashes y antes de publicar la Release:
+
+```powershell
+gh attestation verify <archivo> -R NoelRDB/Transcriptor
+```
+
+La atestación acredita procedencia de GitHub Actions. Complementa las sumas y
+la firma futura de SignPath, pero no sustituye Authenticode ni SmartScreen.
+
 ## Instalación y datos
 
 - NSIS se instala para la cuenta actual y no necesita privilegios de administrador.
-- El instalador incorpora el bootstrapper de WebView2; Windows 10/11 normalmente ya incluye el runtime.
+- Windows 10/11 normalmente ya incluye WebView2. El modo de Tauri es `skip`: el
+  instalador no contiene ni descarga el bootstrapper. Si falta el runtime, el
+  usuario debe instalarlo desde la
+  [página oficial de Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/)
+  antes de abrir Transcriptor.
 - El sidecar incluye el runtime de Python y FFmpeg.
-- CUDA acelera equipos NVIDIA compatibles; si no existe una GPU válida, el motor vuelve a CPU.
-- Los textos de licencia de las dependencias Python y NVIDIA se recopilan desde las versiones fijadas y se incluyen dentro del instalador.
-- Los modelos Whisper, CAM++ y Ollama no forman parte del instalador principal, pero Whisper y CAM++ se instalan desde la propia interfaz con confirmación y progreso.
+- `v0.1.0` sí redistribuye bibliotecas CUDA dentro de sus instaladores
+  heredados. Las compilaciones posteriores las excluyen; si no se descargan o
+  no están disponibles, el motor vuelve a CPU.
+- Los textos de licencia de las dependencias que sí se redistribuyen se recopilan desde las versiones fijadas y se incluyen dentro del instalador.
+- Los modelos Whisper, CAM++ y Ollama no forman parte del instalador principal.
+  En compilaciones posteriores a `v0.1.0`, Whisper, CAM++ y el runtime CUDA
+  opcional se preparan desde la propia interfaz con confirmación, tamaño y
+  progreso.
 - Proyectos, grabaciones y perfiles se crean después de instalar, dentro del perfil local de cada usuario, y jamás bajo `Program Files` ni dentro del repositorio.
 
 ## Modelos
@@ -59,9 +144,25 @@ Los modelos Whisper no se incluyen dentro del `.exe` o `.msi`. El usuario elige 
 
 Esta separación es necesaria: Turbo ocupa aproximadamente 1,6 GiB, Large-v3 3,1 GiB y el modelo Qwen recomendado por Ollama alrededor de 6,6 GB. Incluirlos todos convertiría la descarga inicial en más de 11 GB; además, Large-v3 junto al runtime superaría el límite de 2 GiB por archivo de GitHub Releases. Los pesos conservan también sus propias fichas y condiciones de licencia. Por esas razones el instalador contiene el gestor de modelos, no los pesos de todos los modelos.
 
-Para CUDA se redistribuyen únicamente `cublas64_12.dll`, `cublasLt64_12.dll` y `cudnn64_9.dll`, que son las bibliotecas cargadas por CTranslate2 durante una inferencia Whisper verificada en Windows. El resto de módulos opcionales del paquete NVIDIA no se copia: superaría el límite de NSIS sin intervenir en este flujo. El script falla si falta cualquiera de las tres bibliotecas requeridas.
+Esta separación CUDA se aplica a `master` y a las compilaciones posteriores a
+`v0.1.0`; no describe el instalador heredado, que sí incorpora las bibliotecas.
+En las nuevas compilaciones, el instalador incluye únicamente el gestor, no
+bibliotecas de NVIDIA. Cuando se detecta una GPU NVIDIA sin runtime, la
+interfaz solicita un consentimiento separado y muestra la descarga real. El
+gestor obtiene las ruedas Windows x64 de
+`nvidia-cublas-cu12==12.9.2.10` y
+`nvidia-cudnn-cu12==9.25.0.15`, además de su dependencia
+`nvidia-cuda-nvrtc-cu12==12.9.86`, desde PyPI mediante URLs fijadas. Verifica
+sus SHA-256 y extrae una lista cerrada con cuBLAS, todas las subbibliotecas de
+cuDNN 9 necesarias y NVRTC, más los textos de licencia exactos de los tres paquetes,
+en `%LOCALAPPDATA%\TranscriptorData\runtime\cuda`. La activación es atómica, los
+temporales se eliminan al completar o cancelar y una instalación anterior sigue
+siendo válida.
 
-Los instaladores actuales ocupan aproximadamente 633 MiB (NSIS) y 731 MiB (MSI). `verify-release.ps1` impide publicar cualquier artefacto que alcance el límite de 2 GiB de GitHub.
+Para las nuevas compilaciones, `verify-release.ps1` comprueba que la
+configuración pública no incluya el directorio CUDA y bloquea cualquier
+artefacto que alcance el límite de 2 GiB de GitHub. Esa comprobación no cambia
+el contenido histórico de `v0.1.0`.
 
 ## macOS y Linux
 

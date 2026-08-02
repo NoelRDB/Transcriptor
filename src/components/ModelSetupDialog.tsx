@@ -18,6 +18,7 @@ import {
   type RecommendedModelSetup,
 } from "../lib/modelSetup";
 import type {
+  CudaRuntimeStatus,
   EngineEvent,
   HardwareInfo,
   ModelCatalog,
@@ -29,6 +30,7 @@ interface ModelSetupDialogProps {
   onComplete: (result: {
     qualityMode: QualityMode;
     speakerAiReady: boolean;
+    cudaReady: boolean;
   }) => void;
   onLater: () => void;
 }
@@ -38,7 +40,7 @@ type SetupState = "checking" | "ready" | "installing" | "completed" | "failed";
 interface ActiveDownload {
   id: string;
   name: string;
-  kind: "transcription" | "speakers";
+  kind: "transcription" | "cuda" | "speakers";
   position: number;
   total: number;
 }
@@ -47,8 +49,10 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [speakerAi, setSpeakerAi] = useState<SpeakerAiStatus | null>(null);
+  const [cudaRuntime, setCudaRuntime] = useState<CudaRuntimeStatus | null>(null);
   const [state, setState] = useState<SetupState>("checking");
   const [consent, setConsent] = useState(false);
+  const [includeCuda, setIncludeCuda] = useState(false);
   const [activeDownload, setActiveDownload] = useState<ActiveDownload | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [progressMessage, setProgressMessage] = useState("");
@@ -57,9 +61,15 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
 
   const plan = useMemo(
     () => catalog
-      ? buildRecommendedModelSetup(catalog, hardware, Boolean(speakerAi?.ready))
+      ? buildRecommendedModelSetup(
+        catalog,
+        hardware,
+        Boolean(speakerAi?.ready),
+        cudaRuntime,
+        includeCuda,
+      )
       : null,
-    [catalog, hardware, speakerAi?.ready],
+    [catalog, cudaRuntime, hardware, includeCuda, speakerAi?.ready],
   );
 
   useEffect(() => {
@@ -68,12 +78,14 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
       engine.listModels(),
       engine.getHardwareInfo().catch(() => null),
       engine.getSpeakerAiStatus(),
+      engine.getCudaRuntimeStatus().catch(() => null),
     ])
-      .then(([nextCatalog, nextHardware, nextSpeakerAi]) => {
+      .then(([nextCatalog, nextHardware, nextSpeakerAi, nextCudaRuntime]) => {
         if (!active) return;
         setCatalog(nextCatalog);
         setHardware(nextHardware);
         setSpeakerAi(nextSpeakerAi);
+        setCudaRuntime(nextCudaRuntime);
         setState("ready");
       })
       .catch((reason) => {
@@ -90,9 +102,44 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
     setError("");
     setCancelling(false);
     const missingModels = plan.models.filter((model) => !model.installed);
-    const totalSteps = missingModels.length + (plan.includesSpeakerAi ? 1 : 0);
+    const totalSteps = missingModels.length
+      + (plan.includesCudaRuntime ? 1 : 0)
+      + (plan.includesSpeakerAi ? 1 : 0);
     let position = 0;
     try {
+      // CUDA must be prepared before downloading a model because importing
+      // faster-whisper also loads CTranslate2. Loading it first lets Windows
+      // bind the verified optional GPU DLL without pretending a hot-swap is
+      // possible; existing sessions receive an explicit restartRequired state.
+      if (plan.includesCudaRuntime) {
+        position += 1;
+        setActiveDownload({
+          id: "cuda-runtime",
+          name: "Backend GPU NVIDIA",
+          kind: "cuda",
+          position,
+          total: totalSteps,
+        });
+        setProgress(0);
+        setProgressMessage("Conectando con NVIDIA, CTranslate2 y sus licencias oficiales…");
+        await waitForCudaRuntime(() => engine.installCudaRuntime(), (event) => {
+          const payload = event.payload as {
+            downloadedBytes?: number;
+            totalBytes?: number;
+            percent?: number;
+            message?: string;
+          };
+          setProgress(payload.percent ?? null);
+          setProgressMessage(
+            payload.message
+            ?? (payload.totalBytes
+              ? `${formatBytes(payload.downloadedBytes ?? 0)} de ${formatBytes(payload.totalBytes)}`
+              : "Preparando el backend GPU…"),
+          );
+        });
+        setCudaRuntime(await engine.getCudaRuntimeStatus());
+        setHardware(await engine.getHardwareInfo().catch(() => hardware));
+      }
       for (const model of missingModels) {
         position += 1;
         setActiveDownload({
@@ -136,8 +183,14 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
         });
         setSpeakerAi((current) => current ? { ...current, installed: true, ready: true } : current);
       }
-      const finalCatalog = await engine.listModels();
+      const [finalCatalog, finalCudaRuntime, finalHardware] = await Promise.all([
+        engine.listModels(),
+        engine.getCudaRuntimeStatus().catch(() => cudaRuntime),
+        engine.getHardwareInfo().catch(() => hardware),
+      ]);
       setCatalog(finalCatalog);
+      setCudaRuntime(finalCudaRuntime);
+      setHardware(finalHardware);
       setProgress(100);
       setProgressMessage("Modelos verificados y listos para usarse sin conexión.");
       setActiveDownload(null);
@@ -152,11 +205,19 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
   }
 
   async function cancelPreparation() {
-    if (!activeDownload || activeDownload.kind !== "speakers" || cancelling) return;
+    if (
+      !activeDownload
+      || activeDownload.kind === "transcription"
+      || cancelling
+    ) return;
     setCancelling(true);
     setProgressMessage("Deteniendo la preparación de forma segura…");
     try {
-      await engine.cancelSpeakerAiDownload();
+      if (activeDownload.kind === "cuda") {
+        await engine.cancelCudaRuntimeDownload();
+      } else {
+        await engine.cancelSpeakerAiDownload();
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setCancelling(false);
@@ -200,6 +261,13 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
             <div>
               <span><Check /> Transcripción profesional</span>
               <span><Check /> Detección de hablantes</span>
+              {cudaRuntime?.usable
+                ? <span><Check /> Aceleración NVIDIA activa</span>
+                : cudaRuntime?.restartRequired
+                  ? <span><Cpu /> GPU preparada · reinicia para activarla</span>
+                  : cudaRuntime?.ready
+                  ? <span><Cpu /> CUDA instalada · CPU activa por incompatibilidad local</span>
+                  : null}
               <span><Check /> Procesamiento privado</span>
             </div>
           </div>
@@ -211,7 +279,7 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
                 <strong>{plan?.label ?? "Preparación local"}</strong>
                 <p>{plan?.reason ?? error}</p>
               </div>
-              {hardware && <output><Cpu size={14} /> {hardware.memory.totalMiB >= 1024 ? `${(hardware.memory.totalMiB / 1024).toFixed(0)} GB RAM` : `${hardware.memory.totalMiB} MB RAM`}{hardware.cudaAvailable ? " · GPU CUDA" : " · CPU"}</output>}
+              {hardware && <output><Cpu size={14} /> {hardware.memory.totalMiB >= 1024 ? `${(hardware.memory.totalMiB / 1024).toFixed(0)} GB RAM` : `${hardware.memory.totalMiB} MB RAM`}{hardware.cudaAvailable ? " · GPU CUDA" : hardware.gpu ? " · NVIDIA detectada" : " · CPU"}</output>}
             </section>
 
             <div className="setup-package-list">
@@ -231,12 +299,43 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
                 </div>
                 <em>{speakerAi?.ready ? <><Check size={12} /> Listo</> : "Incluido"}</em>
               </article>
+              {hardware?.gpu && <article className={includeCuda ? "selected" : ""}>
+                <span><Cpu /></span>
+                <div>
+                  <strong>Aceleración NVIDIA CUDA · opcional</strong>
+                  <p>{cudaRuntime?.usable
+                    ? "Ya está instalada, verificada y activa en este equipo."
+                    : cudaRuntime?.restartRequired
+                      ? "Instalada y verificada. Reinicia Transcriptor para cargarla antes que el motor CPU."
+                    : cudaRuntime?.ready
+                      ? "Está instalada, pero el entorno NVIDIA no puede activarla. Revisa el controlador; la CPU seguirá funcionando."
+                    : `${formatBytes(cudaRuntime?.downloadBytes ?? 0)} · NVIDIA y CTranslate2 GPU, con binarios, licencias y avisos verificados por SHA-256.`}</p>
+                  {!cudaRuntime?.ready && <label>
+                    <input
+                      type="checkbox"
+                      checked={includeCuda}
+                      disabled={installing || !cudaRuntime?.canInstall}
+                      onChange={(event) => setIncludeCuda(event.target.checked)}
+                    />
+                    <span>Añadir aceleración NVIDIA a esta preparación</span>
+                  </label>}
+                </div>
+                <em>{cudaRuntime?.usable
+                  ? <><Check size={12} /> Activa</>
+                  : cudaRuntime?.restartRequired
+                    ? <>Reinicio necesario</>
+                  : cudaRuntime?.ready
+                    ? <>CPU activa</>
+                  : includeCuda
+                    ? "Seleccionada"
+                    : "CPU funciona sin ella"}</em>
+              </article>}
             </div>
 
             {installing && activeDownload && <section className="setup-download" aria-live="polite">
               <div>
                 <span><LoaderCircle className="spin" /></span>
-                <div><strong>{activeDownload.kind === "speakers" ? "Preparando voces" : `Descargando ${activeDownload.name}`}</strong><p>Paso {activeDownload.position} de {activeDownload.total} · {progressMessage}</p></div>
+                <div><strong>{activeDownload.kind === "speakers" ? "Preparando voces" : activeDownload.kind === "cuda" ? "Preparando la GPU NVIDIA" : `Descargando ${activeDownload.name}`}</strong><p>Paso {activeDownload.position} de {activeDownload.total} · {progressMessage}</p></div>
                 <output>{progress == null ? "Calculando…" : `${progress.toFixed(0)} %`}</output>
               </div>
               <progress aria-label={`Progreso de ${activeDownload.name}`} max={100} value={progress ?? undefined} />
@@ -250,7 +349,7 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
 
             {!installing && <label className="setup-consent">
               <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-              <span><strong>Autorizo esta descarga única de {formatBytes(requiredBytes)}</strong><small>Los modelos proceden de sus repositorios oficiales, se guardan en {catalog?.root} y no contienen tus audios ni transcripciones.</small></span>
+              <span><strong>Autorizo la descarga seleccionada de {formatBytes(plan?.downloadBytes ?? 0)}</strong><small>Si he marcado la GPU, acepto expresamente las licencias incluidas de NVIDIA CUDA, CTranslate2, Intel oneMKL/OpenMP y oneDNN. Las fuentes tienen hash fijo y no contienen mis audios ni transcripciones.</small></span>
             </label>}
 
             <div className={`setup-storage ${hasSpace ? "" : "insufficient"}`}>
@@ -259,8 +358,9 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
               <i />
               <span>{formatBytes(requiredBytes)} necesarios, incluida la reserva de seguridad</span>
             </div>
+            {plan?.includesCudaRuntime && <p className="setup-runtime-note"><HardDrive size={14} /> El backend GPU se guardará en {cudaRuntime?.root}. Se descarga después de tu consentimiento, no forma parte del instalador firmado y sus temporales se eliminan al terminar o cancelar.</p>}
 
-            <p className="setup-runtime-note"><ShieldCheck size={14} /> La aplicación ya incluye su motor y FFmpeg. No tendrás que instalar Python, Node.js ni escribir comandos.</p>
+            <p className="setup-runtime-note"><ShieldCheck size={14} /> El motor CPU OSS sí viene incluido y cubierto por la firma del instalador. Si la GPU no se activa, Transcriptor lo avisará y mostrará que está usando CPU.</p>
           </>
         )}
       </div>
@@ -269,10 +369,14 @@ export function ModelSetupDialog({ onComplete, onLater }: ModelSetupDialogProps)
         <span><LockKeyhole size={13} /> Audio y modelos bajo tu control</span>
         <div>
           {!completed && !installing && <button className="button ghost" onClick={onLater}>Ahora no</button>}
-          {installing && activeDownload?.kind === "speakers" && <button className="button ghost" disabled={cancelling} onClick={() => void cancelPreparation()}>{cancelling ? "Deteniendo…" : "Cancelar CAM++"}</button>}
+          {installing && activeDownload && activeDownload.kind !== "transcription" && <button className="button ghost" disabled={cancelling} onClick={() => void cancelPreparation()}>{cancelling ? "Deteniendo…" : activeDownload.kind === "cuda" ? "Cancelar CUDA" : "Cancelar CAM++"}</button>}
           {installing && activeDownload?.kind === "transcription" && <span className="setup-download-lock"><LockKeyhole size={13} /> Descarga verificable en curso</span>}
           {completed ? (
-            <button className="button primary" onClick={() => onComplete({ qualityMode: plan?.qualityMode ?? "instant", speakerAiReady: true })}>Empezar a usar Transcriptor</button>
+            <button className="button primary" onClick={() => onComplete({
+              qualityMode: plan?.qualityMode ?? "instant",
+              speakerAiReady: true,
+              cudaReady: Boolean(cudaRuntime?.usable),
+            })}>Empezar a usar Transcriptor</button>
           ) : (
             <button className="button primary" disabled={installing || !consent || !hasSpace} onClick={() => void prepareComputer()}>
               {installing ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}
@@ -327,6 +431,31 @@ function waitForSpeakerModel(
   );
 }
 
+function waitForCudaRuntime(
+  start: () => Promise<unknown>,
+  onProgress: (event: EngineEvent) => void,
+): Promise<void> {
+  return waitForEngineTask(
+    start,
+    (event) => {
+      const payload = event.payload as { runtimeId?: string; message?: string };
+      if (payload.runtimeId && payload.runtimeId !== "cuda-runtime") return null;
+      if (event.type === "cuda_runtime_progress") {
+        onProgress(event);
+        return null;
+      }
+      if (event.type === "cuda_runtime_completed") return "completed";
+      if (event.type === "cuda_runtime_failed") {
+        return new Error(payload.message ?? "No se pudo preparar CUDA.");
+      }
+      if (event.type === "cuda_runtime_cancelled") {
+        return new Error("Se canceló la preparación de CUDA; puedes continuar por CPU.");
+      }
+      return null;
+    },
+  );
+}
+
 function waitForEngineTask(
   start: () => Promise<unknown>,
   route: (event: EngineEvent) => "completed" | Error | null,
@@ -354,6 +483,9 @@ function rememberConsent(plan: RecommendedModelSetup) {
     const ids = plan.models.map((model) => model.id);
     if (ids.includes("turbo") && ids.includes("large-v3")) {
       localStorage.setItem("transcriptor.model-consent.turbo+large-v3", "accepted");
+    }
+    if (plan.includesCudaRuntime) {
+      localStorage.setItem("transcriptor.cuda-runtime-consent.v2", "accepted");
     }
     localStorage.setItem("transcriptor.model-onboarding.v1", "completed");
   } catch {
