@@ -130,7 +130,6 @@ def test_cuda_runtime_status_is_available_through_the_typed_protocol(monkeypatch
     monkeypatch.setattr(server_module, "get_cuda_runtime_status", lambda: status)
     writer = CaptureWriter()
     server = EngineServer(database=StubDatabase(), writer=writer)
-    monkeypatch.setattr(server.transcriber, "_cuda_runtime_available", lambda: False)
 
     server.handle(
         {
@@ -142,6 +141,7 @@ def test_cuda_runtime_status_is_available_through_the_typed_protocol(monkeypatch
 
     assert status["usable"] is False
     assert ("result", "cuda-status", status) in writer.messages
+    assert server._transcriber is None
 
 
 def test_recording_protocol_starts_without_loading_the_transcription_model(monkeypatch):
@@ -153,11 +153,6 @@ def test_recording_protocol_starts_without_loading_the_transcription_model(monke
         "createdAt": "2026-08-02T12:00:00+00:00",
     }
     monkeypatch.setattr(server.recorder, "start", lambda language: start | {"languageForTest": language})
-    monkeypatch.setattr(
-        server.transcriber,
-        "_load_model",
-        lambda *_args, **_kwargs: pytest.fail("La grabadora no debe cargar Whisper"),
-    )
 
     server.handle(
         {
@@ -168,6 +163,20 @@ def test_recording_protocol_starts_without_loading_the_transcription_model(monke
     )
 
     assert ("result", "recording-start", start | {"languageForTest": "es"}) in writer.messages
+    assert server._transcriber is None
+    assert server._live is None
+
+
+def test_listing_projects_does_not_load_whisper_or_live_transcription():
+    writer = CaptureWriter()
+    database = AnalysisDatabase()
+    server = EngineServer(database=database, writer=writer)
+
+    server.handle({"requestId": "projects", "action": "list_projects", "payload": {}})
+
+    assert ("result", "projects", [{"id": "still-responsive"}]) in writer.messages
+    assert server._transcriber is None
+    assert server._live is None
 
 
 def test_cuda_runtime_manager_streams_progress_and_reports_activation(monkeypatch):
@@ -195,8 +204,6 @@ def test_cuda_runtime_manager_streams_progress_and_reports_activation(monkeypatc
             "activationState": "active",
         },
     )
-    monkeypatch.setattr(server.transcriber, "_cuda_runtime_available", lambda: True)
-
     server._run_cuda_runtime_download(threading.Event())
 
     assert any(
@@ -205,6 +212,7 @@ def test_cuda_runtime_manager_streams_progress_and_reports_activation(monkeypatc
         and payload["runtimeId"] == "cuda-runtime"
         for message_type, _request_id, payload in writer.messages
     )
+    assert server._transcriber is None
     assert any(
         message_type == "cuda_runtime_completed"
         and payload["ready"] is True

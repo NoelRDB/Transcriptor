@@ -23,10 +23,10 @@ from .cuda_runtime import (
 from .database import ProjectDatabase
 from .deep_insights import AnalysisCancelledError, analyze_transcript_deep, get_local_ai_status
 from .diagnostics import record_diagnostic
+from .exceptions import CancelledError
 from .exporters import export_to
 from .hardware import get_hardware_info
 from .insights import analyze_transcript
-from .live import LiveSessionManager
 from .media import analyze_media
 from .media_edit import export_without_segments
 from .models import delete_model, list_models
@@ -37,15 +37,14 @@ from .protocol import ProtocolWriter
 from .recording import RecordingSessionManager
 from .speaker_ai import download_speaker_model, neural_assign_speakers, speaker_ai_status
 from .system_diagnostics import diagnose_system
-from .transcriber import CancelledError, Transcriber
 
 
 class EngineServer:
     def __init__(self, database: ProjectDatabase | None = None, writer: ProtocolWriter | None = None) -> None:
         self.database = database or ProjectDatabase()
         self.writer = writer or ProtocolWriter()
-        self.transcriber = Transcriber()
-        self.live = LiveSessionManager(self.transcriber)
+        self._transcriber: Any | None = None
+        self._live: Any | None = None
         self.recorder = RecordingSessionManager()
         self._jobs: dict[str, threading.Event] = {}
         self._analysis_jobs: dict[str, threading.Event] = {}
@@ -54,6 +53,33 @@ class EngineServer:
         self._jobs_lock = threading.Lock()
         self._queue_fill_lock = threading.Lock()
         self._queue_hardware: dict[str, Any] | None = None
+
+    @property
+    def transcriber(self) -> Any:
+        if self._transcriber is None:
+            from .transcriber import Transcriber
+
+            self._transcriber = Transcriber()
+        return self._transcriber
+
+    @transcriber.setter
+    def transcriber(self, value: Any) -> None:
+        self._transcriber = value
+
+    @property
+    def live(self) -> Any:
+        if self._live is None:
+            from .live import LiveSessionManager
+
+            self._live = LiveSessionManager(self.transcriber)
+        return self._live
+
+    @live.setter
+    def live(self, value: Any) -> None:
+        self._live = value
+
+    def _live_active(self) -> bool:
+        return bool(self._live is not None and self._live.active)
 
     def serve(self) -> None:
         # Tauri writes JSONL to the sidecar as UTF-8.  A frozen Python process on
@@ -104,17 +130,19 @@ class EngineServer:
             if action == "analyze_media":
                 self.writer.result(request_id, analyze_media(payload["mediaPath"]))
             elif action == "diagnose_system":
+                cuda_ready = bool(get_cuda_runtime_status().get("ready"))
                 self.writer.result(
                     request_id,
                     diagnose_system(
                         str(payload.get("mediaPath") or "") or None,
-                        self.transcriber._cuda_runtime_available(),
+                        cuda_ready,
                     ),
                 )
             elif action == "get_hardware_info":
+                cuda_ready = bool(get_cuda_runtime_status().get("ready"))
                 self.writer.result(
                     request_id,
-                    get_hardware_info(self.transcriber._cuda_runtime_available()),
+                    get_hardware_info(cuda_ready),
                 )
             elif action == "get_cuda_runtime_status":
                 status = get_cuda_runtime_status()
@@ -134,10 +162,7 @@ class EngineServer:
                                 ),
                             }
                         )
-                        status["usable"] = bool(
-                            activation.get("activated")
-                            and self.transcriber._cuda_runtime_available()
-                        )
+                        status["usable"] = bool(activation.get("activated"))
                     except CudaRuntimeError as error:
                         status["activationState"] = "failed"
                         status["activationError"] = str(error)
@@ -389,7 +414,7 @@ class EngineServer:
             elif action == "start_recording_session":
                 with self._jobs_lock:
                     if (
-                        self.live.active
+                        self._live_active()
                         or self.recorder.active
                         or self._jobs
                         or self._analysis_jobs
@@ -458,7 +483,7 @@ class EngineServer:
             self.writer.error(request_id, self._safe_error(error))
 
     def _recording_active(self) -> bool:
-        return self.recorder.active or self.live.active
+        return self.recorder.active or self._live_active()
 
     def _start_voice_learning(
         self,
@@ -932,7 +957,7 @@ class EngineServer:
     def _start_cuda_runtime_download(self, request_id: str) -> None:
         status = get_cuda_runtime_status()
         if status["ready"]:
-            status["usable"] = self.transcriber._cuda_runtime_available()
+            status["usable"] = True
             self.writer.result(
                 request_id,
                 {
@@ -996,10 +1021,7 @@ class EngineServer:
                     "activationState": "failed",
                 }
                 activation_error = str(error)
-            usable = bool(
-                activation.get("activated")
-                and self.transcriber._cuda_runtime_available()
-            )
+            usable = bool(activation.get("activated"))
             self.writer.send(
                 "cuda_runtime_completed",
                 {
@@ -1425,9 +1447,10 @@ class EngineServer:
     def _recommended_queue_concurrency(self) -> int:
         if self._queue_hardware is None:
             try:
-                self._queue_hardware = get_hardware_info(
-                    self.transcriber._cuda_runtime_available()
-                )
+                # Queue sizing must never import Whisper/CTranslate2 during
+                # application startup. CPU/RAM are enough for a conservative
+                # recommendation; the actual job still selects GPU later.
+                self._queue_hardware = get_hardware_info(False)
             except Exception:
                 self._queue_hardware = {}
         hardware = self._queue_hardware

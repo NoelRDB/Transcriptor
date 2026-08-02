@@ -29,6 +29,7 @@ export default function App() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showVoices, setShowVoices] = useState(false);
   const [showModelSetup, setShowModelSetup] = useState(false);
+  const [recentProjectsLoading, setRecentProjectsLoading] = useState(engine.available);
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [assistantAnswers, setAssistantAnswers] = useState<AssistantAnswer[]>([]);
@@ -260,8 +261,25 @@ export default function App() {
   }, [openMedia]);
 
   useEffect(() => {
-    if (!engine.available) return;
-    engine.listProjects().then(useAppStore.getState().setRecentProjects).catch(() => undefined);
+    if (!engine.available) {
+      setRecentProjectsLoading(false);
+      return;
+    }
+    let active = true;
+    setRecentProjectsLoading(true);
+    engine.listProjects()
+      .then((projects) => {
+        if (active) useAppStore.getState().setRecentProjects(projects);
+      })
+      .catch((error) => {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : String(error);
+        useAppStore.getState().setError(`No se pudo iniciar el motor local: ${message}`);
+      })
+      .finally(() => {
+        if (active) setRecentProjectsLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -273,22 +291,8 @@ export default function App() {
       setShowModelSetup(true);
       return;
     }
-    let active = true;
-    Promise.all([
-      engine.getHardwareInfo(),
-      engine.getCudaRuntimeStatus(),
-    ]).then(([hardware, runtime]) => {
-      if (
-        active
-        && hardware.gpu
-        && runtime.supported
-        && !runtime.ready
-        && localStorage.getItem("transcriptor.cuda-runtime-prompt.v1") !== "dismissed"
-      ) {
-        setShowModelSetup(true);
-      }
-    }).catch(() => undefined);
-    return () => { active = false; };
+    // CUDA and hardware are checked on demand in Ajustes. Verifying the
+    // optional 1.3 GB GPU runtime here used to block projects and recording.
   }, []);
 
   useEffect(() => {
@@ -696,7 +700,7 @@ export default function App() {
     <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(store.project?.insights?.mode ?? "general"); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onRenameProject={renameCurrentProject} onShowProjects={() => store.setProject(null)} />
     {store.error && <div className="error-banner" role="alert"><AlertTriangle size={18} /><span>{store.error}</span><button onClick={() => store.setError(null)} aria-label="Cerrar"><X size={17} /></button></div>}
     {store.notice && !store.error && <div className="notice-banner" role="status"><Info size={18} /><span>{store.notice}</span><button onClick={() => store.setNotice(null)} aria-label="Cerrar aviso"><X size={17} /></button></div>}
-    {!store.project ? <Welcome recent={store.recentProjects} onOpen={() => engine.available ? openMedia() : document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} onOpenRecent={openRecent} onDeleteRecent={deleteRecent} onDropPath={openMedia} onImportFiles={queueMediaFiles} /> :
+    {!store.project ? <Welcome recent={store.recentProjects} loading={recentProjectsLoading} onOpen={() => engine.available ? openMedia() : document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} onOpenRecent={openRecent} onDeleteRecent={deleteRecent} onDropPath={openMedia} onImportFiles={queueMediaFiles} /> :
       <main className={`workspace ${transcriptFocus ? "transcript-focus" : ""}`} style={transcriptFocus ? undefined : { gridTemplateColumns: `${split}% 7px 1fr` }} onPointerMove={(event) => { if (!dragging.current) return; const rect = event.currentTarget.getBoundingClientRect(); setSplit(Math.min(72, Math.max(35, ((event.clientX - rect.left) / rect.width) * 100))); }} onPointerUp={() => { dragging.current = false; }} onPointerLeave={() => { dragging.current = false; }}>
         <div className="player-pane"><div className="media-info"><span>{store.project.mediaType === "video" ? "VÍDEO" : "AUDIO"}</span><strong>{store.project.name}</strong><small>{store.project.mediaPath}</small></div><MediaPlayer key={store.project.id} project={store.project} currentTimeMs={store.currentTimeMs} skipSeconds={store.settings.skipSeconds} onTime={store.setCurrentTime} onPlaying={store.setPlaying} onError={store.setError} seekSignal={seekSignal} /></div>
         <button className="splitter" aria-label="Redimensionar paneles" onKeyDown={(event) => { if (event.key === "ArrowLeft") setSplit((value) => Math.max(35, value - 2)); if (event.key === "ArrowRight") setSplit((value) => Math.min(72, value + 2)); }} onPointerDown={(event) => { dragging.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} />

@@ -18,6 +18,7 @@ from typing import Any
 from .audio import AudioDecodeCancelled, decode_audio_with_progress, enhance_speech_audio
 from .cuda_runtime import CudaRuntimeError, preload_cuda_backend
 from .diarization import assign_speakers
+from .exceptions import CancelledError
 from .hardware import RuntimeMonitor
 from .paragraphs import group_segments
 from .paths import models_dir
@@ -908,7 +909,3 @@ class Transcriber:
             reviewed_segments=reviewed,
             voice_observations=voice_observations,
         )
-
-
-class CancelledError(Exception):
-    pass

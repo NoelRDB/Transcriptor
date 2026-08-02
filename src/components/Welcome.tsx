@@ -1,4 +1,4 @@
-import { ArrowUpRight, Check, FileAudio2, FileVideo2, FolderOpen, LockKeyhole, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUpRight, Check, FileAudio2, FileVideo2, FolderOpen, LoaderCircle, LockKeyhole, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { RecentProject } from "../types";
 import { formatClock } from "../lib/time";
@@ -13,6 +13,7 @@ interface BatchImportResult {
 
 interface WelcomeProps {
   recent: RecentProject[];
+  loading?: boolean;
   onOpen: () => void;
   onOpenRecent: (id: string) => void;
   onDeleteRecent: (id: string) => Promise<void>;
@@ -28,7 +29,7 @@ function projectStatus(project: RecentProject) {
   return { label: project.transcriptionStatus === "completed" ? "Completado" : running ? "Procesando" : "Pendiente", running };
 }
 
-export function Welcome({ recent, onOpen, onOpenRecent, onDeleteRecent, onDropPath, onImportFiles }: WelcomeProps) {
+export function Welcome({ recent, loading = false, onOpen, onOpenRecent, onDeleteRecent, onDropPath, onImportFiles }: WelcomeProps) {
   const [pendingDelete, setPendingDelete] = useState<RecentProject | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -88,7 +89,9 @@ export function Welcome({ recent, onOpen, onOpenRecent, onDeleteRecent, onDropPa
             <span><strong>Proyectos recientes</strong><small>{recent.length ? `${recent.length} guardados en este equipo` : "Tu historial local"}</small></span>
             <FolderOpen size={18} />
           </header>
-          {!recent.length ? (
+          {loading ? (
+            <div className="no-recent" role="status"><span><LoaderCircle className="spin" size={25} /></span><strong>Conectando con tus proyectos…</strong><p>Iniciando el motor local y recuperando tu historial.</p></div>
+          ) : !recent.length ? (
             <div className="no-recent"><span><FolderOpen size={25} /></span><strong>Aún no hay proyectos</strong><p>Cuando abras un archivo podrás retomarlo desde aquí.</p></div>
           ) : (
             <div className="recent-list">
