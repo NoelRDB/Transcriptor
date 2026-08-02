@@ -50,6 +50,7 @@ export function LiveRecorderDialog({ audioSource, language, onAudioSourceChange,
   const sessionIdRef = useRef<string | null>(null);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const chunkIdRef = useRef(0);
+  const pendingChunksRef = useRef<string[]>([]);
 
   useEffect(() => () => {
     void captureRef.current?.stop(false).catch(() => undefined);
@@ -75,12 +76,11 @@ export function LiveRecorderDialog({ audioSource, language, onAudioSourceChange,
     setError(null);
     setDurationMs(0);
     setWave(EMPTY_WAVE);
-    setStatus("Solicitando acceso al audio…");
+    setStatus("Solicitando acceso al audio y preparando la grabadora…");
     queueRef.current = Promise.resolve();
     chunkIdRef.current = 0;
+    pendingChunksRef.current = [];
     try {
-      const session = await engine.startRecordingSession(selectedLanguage);
-      sessionIdRef.current = session.sessionId;
       const capture = new LiveAudioCapture(
         enqueueChunk,
         updateLevel,
@@ -89,13 +89,23 @@ export function LiveRecorderDialog({ audioSource, language, onAudioSourceChange,
         "recording",
       );
       captureRef.current = capture;
-      await capture.start(audioSource);
+      // The permission prompt should appear immediately even when the packaged
+      // engine is still starting. Audio chunks are buffered until the WAV session exists.
+      await Promise.all([engine.start(), capture.start(audioSource)]);
+      const session = await engine.startRecordingSession(selectedLanguage);
+      sessionIdRef.current = session.sessionId;
+      const pendingChunks = pendingChunksRef.current;
+      pendingChunksRef.current = [];
+      pendingChunks.forEach(enqueueChunk);
       setState("recording");
       setStatus("Grabando en este equipo");
     } catch (reason) {
       const sessionId = sessionIdRef.current;
       if (sessionId) await engine.cancelRecordingSession(sessionId).catch(() => undefined);
+      await captureRef.current?.stop(false).catch(() => undefined);
       sessionIdRef.current = null;
+      captureRef.current = null;
+      pendingChunksRef.current = [];
       setError(friendlyMicrophoneError(reason));
       setState("failed");
       setStatus("No se pudo iniciar la grabación");
@@ -104,7 +114,10 @@ export function LiveRecorderDialog({ audioSource, language, onAudioSourceChange,
 
   function enqueueChunk(pcmBase64: string) {
     const sessionId = sessionIdRef.current;
-    if (!sessionId) return;
+    if (!sessionId) {
+      pendingChunksRef.current.push(pcmBase64);
+      return;
+    }
     const chunkId = chunkIdRef.current;
     chunkIdRef.current += 1;
     queueRef.current = queueRef.current.then(async () => {

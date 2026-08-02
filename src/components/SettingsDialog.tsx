@@ -47,36 +47,48 @@ export function SettingsDialog({
   onPrepareModels,
   onClose,
 }: SettingsDialogProps) {
-  const [hardware, setHardware] = useState<HardwareInfo | null>(null);
-  const [speakerAi, setSpeakerAi] = useState<SpeakerAiStatus | null>(null);
+  const [hardware, setHardware] = useState<HardwareInfo | null>(() => engine.getCachedHardwareInfo());
+  const [speakerAi, setSpeakerAi] = useState<SpeakerAiStatus | null>(() => engine.getCachedSpeakerAiStatus());
   const [speakerDownload, setSpeakerDownload] = useState<{ downloadedBytes: number; totalBytes: number; percent: number } | null>(null);
   const [speakerError, setSpeakerError] = useState("");
   const [installingSpeakerAi, setInstallingSpeakerAi] = useState(false);
   const [hardwareError, setHardwareError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [hardwareLoading, setHardwareLoading] = useState(() => !engine.getCachedHardwareInfo());
+  const [speakerLoading, setSpeakerLoading] = useState(() => !engine.getCachedSpeakerAiStatus());
   const maxThreads = hardware?.cpu.logicalCores ?? navigator.hardwareConcurrency ?? 4;
   const assignedThreads = threadsFor(settings.performanceProfile, settings, hardware);
   const automaticPlan = hardware ? buildAutomaticPlan(hardware, speakerAi, durationMs, settings.voiceProfilesEnabled) : null;
 
   const refreshHardware = () => {
-    setLoading(true);
+    setHardwareLoading(true);
     setHardwareError("");
-    engine.getHardwareInfo()
+    engine.getHardwareInfo(true)
       .then(setHardware)
       .catch((error) => setHardwareError(error instanceof Error ? error.message : String(error)))
-      .finally(() => setLoading(false));
+      .finally(() => setHardwareLoading(false));
+  };
+
+  const refreshSpeakerStatus = () => {
+    setSpeakerLoading(true);
+    setSpeakerError("");
+    engine.getSpeakerAiStatus()
+      .then(setSpeakerAi)
+      .catch((error) => setSpeakerError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setSpeakerLoading(false));
   };
 
   useEffect(() => {
     let active = true;
-    Promise.allSettled([engine.getHardwareInfo(), engine.getSpeakerAiStatus()]).then(([hardwareResult, speakerResult]) => {
-      if (!active) return;
-      if (hardwareResult.status === "fulfilled") setHardware(hardwareResult.value);
-      else setHardwareError(hardwareResult.reason instanceof Error ? hardwareResult.reason.message : String(hardwareResult.reason));
-      if (speakerResult.status === "fulfilled") setSpeakerAi(speakerResult.value);
-      else setSpeakerError(speakerResult.reason instanceof Error ? speakerResult.reason.message : String(speakerResult.reason));
-      setLoading(false);
-    });
+    // Queue the lightweight model check first. The sidecar handles requests in
+    // order, so a slow nvidia-smi probe must not make an installed model look absent.
+    engine.getSpeakerAiStatus()
+      .then((status) => { if (active) setSpeakerAi(status); })
+      .catch((error) => { if (active) setSpeakerError(error instanceof Error ? error.message : String(error)); })
+      .finally(() => { if (active) setSpeakerLoading(false); });
+    engine.getHardwareInfo()
+      .then((nextHardware) => { if (active) setHardware(nextHardware); })
+      .catch((error) => { if (active) setHardwareError(error instanceof Error ? error.message : String(error)); })
+      .finally(() => { if (active) setHardwareLoading(false); });
     const unsubscribe = engine.subscribe((event: EngineEvent) => {
       if (!active) return;
       if (event.type === "speaker_model_progress") {
@@ -158,10 +170,10 @@ export function SettingsDialog({
 
         <LocalModelsSection />
 
-        {settings.experienceMode === "simple" ? <AutomaticPlanPanel plan={automaticPlan} loading={loading} hardwareError={hardwareError} /> : null}
+        {settings.experienceMode === "simple" ? <AutomaticPlanPanel plan={automaticPlan} loading={hardwareLoading && !hardware} hardwareError={hardwareError} /> : null}
 
         <section className="hardware-section" aria-labelledby="hardware-title">
-          <div className="section-heading"><div><span>DETECTADO EN ESTE EQUIPO</span><strong id="hardware-title">Capacidad disponible</strong></div><button className="refresh-hardware" onClick={refreshHardware} disabled={loading}><RefreshCw size={13} className={loading ? "spin" : ""} />Actualizar</button></div>
+          <div className="section-heading"><div><span>DETECTADO EN ESTE EQUIPO</span><strong id="hardware-title">Capacidad disponible</strong></div><button className="refresh-hardware" onClick={refreshHardware} disabled={hardwareLoading}><RefreshCw size={13} className={hardwareLoading ? "spin" : ""} />Actualizar</button></div>
           {hardware ? <div className="hardware-grid">
             <article><Cpu /><div><small>PROCESADOR</small><strong>{hardware.cpu.name}</strong><span>{hardware.cpu.physicalCores} núcleos · {hardware.cpu.logicalCores} hilos · uso actual {hardware.cpu.usagePercent.toFixed(0)} %</span></div></article>
             <article><MemoryStick /><div><small>MEMORIA</small><strong>{formatMemory(hardware.memory.totalMiB)} RAM</strong><span>{formatMemory(hardware.memory.availableMiB)} disponibles · {hardware.memory.usagePercent.toFixed(0)} % en uso</span></div></article>
@@ -170,16 +182,18 @@ export function SettingsDialog({
         </section>
 
         <section className="speaker-ai-section" aria-labelledby="speaker-ai-title">
-          <div className="section-heading"><div><span>IDENTIDAD DE VOZ · 100 % LOCAL</span><strong id="speaker-ai-title">IA especializada en hablantes</strong></div><output className={speakerAi?.ready ? "ready" : ""}>{speakerAi?.ready ? "CAM++ listo" : "Modelo opcional · 27 MB"}</output></div>
+          <div className="section-heading"><div><span>IDENTIDAD DE VOZ · 100 % LOCAL</span><strong id="speaker-ai-title">IA especializada en hablantes</strong></div><output className={speakerAi?.ready ? "ready" : ""}>{speakerAi?.ready ? "CAM++ listo" : speakerLoading ? "Comprobando…" : "Modelo opcional · 27 MB"}</output></div>
           <div className={`speaker-ai-card ${speakerAi?.ready ? "ready" : ""}`}>
             <span className="speaker-ai-icon"><Users /></span>
             <div>
-              <strong>{speakerAi?.ready ? "Separación neuronal activada" : "Mejora la separación entre voces"}</strong>
-              <p>{speakerAi?.ready ? "Cada fragmento se convierte en una huella acústica de 192 dimensiones. El audio y las huellas no salen del ordenador." : "CAM++ distingue timbre, resonancia, prosodia y características vocales. Si no se instala, seguirá disponible el método acústico compatible."}</p>
+              <strong>{speakerAi?.ready ? "Separación neuronal activada" : speakerLoading ? "Comprobando la IA de voces" : "Mejora la separación entre voces"}</strong>
+              <p>{speakerAi?.ready ? "Cada fragmento se convierte en una huella acústica de 192 dimensiones. El audio y las huellas no salen del ordenador." : speakerLoading ? "Verificando el modelo local instalado en este equipo." : "CAM++ distingue timbre, resonancia, prosodia y características vocales. Si no se instala, seguirá disponible el método acústico compatible."}</p>
               {speakerDownload && <div className="speaker-download" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={speakerDownload.percent}><i><b style={{ width: `${speakerDownload.percent}%` }} /></i><small>{speakerDownload.percent.toFixed(0)} % · {(speakerDownload.downloadedBytes / 1_048_576).toFixed(1)} de {(speakerDownload.totalBytes / 1_048_576).toFixed(1)} MB</small></div>}
               {speakerError && <small className="speaker-error">{speakerError}</small>}
             </div>
-            {!speakerAi?.ready && <button className="button secondary" disabled={installingSpeakerAi} onClick={() => void installSpeakerModel()}>{installingSpeakerAi ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}{installingSpeakerAi ? "Instalando…" : "Instalar IA"}</button>}
+            {speakerLoading && !speakerAi && <LoaderCircle className="spin" size={18} aria-label="Comprobando IA de voces" />}
+            {!speakerLoading && speakerAi && !speakerAi.ready && <button className="button secondary" disabled={installingSpeakerAi} onClick={() => void installSpeakerModel()}>{installingSpeakerAi ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}{installingSpeakerAi ? "Instalando…" : "Instalar IA"}</button>}
+            {!speakerLoading && !speakerAi && speakerError && <button className="button secondary" onClick={refreshSpeakerStatus}><RefreshCw size={15} />Reintentar</button>}
             {speakerAi?.ready && <CheckCircle2 className="speaker-ready-check" />}
           </div>
           {settings.experienceMode === "advanced" && <div className="speaker-advanced-grid">

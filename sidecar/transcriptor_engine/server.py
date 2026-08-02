@@ -18,6 +18,7 @@ from .cuda_runtime import (
     CudaRuntimeError,
     get_cuda_runtime_status,
     install_cuda_runtime,
+    managed_cuda_runtime_present,
     preload_cuda_backend,
 )
 from .database import ProjectDatabase
@@ -35,7 +36,7 @@ from .portable import export_package, import_package
 from .privacy import preview_redactions, redact_project
 from .protocol import ProtocolWriter
 from .recording import RecordingSessionManager
-from .speaker_ai import download_speaker_model, neural_assign_speakers, speaker_ai_status
+from .speaker_model import speaker_ai_status
 from .system_diagnostics import diagnose_system
 
 
@@ -53,6 +54,7 @@ class EngineServer:
         self._jobs_lock = threading.Lock()
         self._queue_fill_lock = threading.Lock()
         self._queue_hardware: dict[str, Any] | None = None
+        self._hardware_cache: tuple[float, bool, dict[str, Any]] | None = None
 
     @property
     def transcriber(self) -> Any:
@@ -80,6 +82,20 @@ class EngineServer:
 
     def _live_active(self) -> bool:
         return bool(self._live is not None and self._live.active)
+
+    def _get_hardware_info(self, cuda_available: bool, *, refresh: bool = False) -> dict[str, Any]:
+        now = time.monotonic()
+        cached = self._hardware_cache
+        if (
+            not refresh
+            and cached is not None
+            and cached[1] == cuda_available
+            and now - cached[0] < 30
+        ):
+            return cached[2]
+        hardware = get_hardware_info(cuda_available)
+        self._hardware_cache = (now, cuda_available, hardware)
+        return hardware
 
     def serve(self) -> None:
         # Tauri writes JSONL to the sidecar as UTF-8.  A frozen Python process on
@@ -139,10 +155,13 @@ class EngineServer:
                     ),
                 )
             elif action == "get_hardware_info":
-                cuda_ready = bool(get_cuda_runtime_status().get("ready"))
+                cuda_ready = managed_cuda_runtime_present()
                 self.writer.result(
                     request_id,
-                    get_hardware_info(cuda_ready),
+                    self._get_hardware_info(
+                        cuda_ready,
+                        refresh=bool(payload.get("refresh", False)),
+                    ),
                 )
             elif action == "get_cuda_runtime_status":
                 status = get_cuda_runtime_status()
@@ -625,6 +644,8 @@ class EngineServer:
                     eta_ms=eta_ms,
                 )
 
+            from .speaker_ai import neural_assign_speakers
+
             assigned_segments, speaker_count = neural_assign_speakers(
                 list(project.get("segments", [])),
                 audio,
@@ -941,6 +962,8 @@ class EngineServer:
             def emit(payload: dict[str, Any]) -> None:
                 if not cancel.is_set():
                     self.writer.send("speaker_model_progress", payload)
+
+            from .speaker_ai import download_speaker_model
 
             result = download_speaker_model(emit, cancel.is_set)
             if cancel.is_set():

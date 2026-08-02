@@ -16,6 +16,7 @@ interface WelcomeProps {
   loading?: boolean;
   onOpen: () => void;
   onOpenRecent: (id: string) => void;
+  onRevealRecent: (mediaPath: string) => void;
   onDeleteRecent: (id: string) => Promise<void>;
   onDropPath: (path: string) => void;
   onImportFiles: (
@@ -29,7 +30,7 @@ function projectStatus(project: RecentProject) {
   return { label: project.transcriptionStatus === "completed" ? "Completado" : running ? "Procesando" : "Pendiente", running };
 }
 
-export function Welcome({ recent, loading = false, onOpen, onOpenRecent, onDeleteRecent, onDropPath, onImportFiles }: WelcomeProps) {
+export function Welcome({ recent, loading = false, onOpen, onOpenRecent, onRevealRecent, onDeleteRecent, onDropPath, onImportFiles }: WelcomeProps) {
   const [pendingDelete, setPendingDelete] = useState<RecentProject | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -89,7 +90,7 @@ export function Welcome({ recent, loading = false, onOpen, onOpenRecent, onDelet
             <span><strong>Proyectos recientes</strong><small>{recent.length ? `${recent.length} guardados en este equipo` : "Tu historial local"}</small></span>
             <FolderOpen size={18} />
           </header>
-          {loading ? (
+          {loading && !recent.length ? (
             <div className="no-recent" role="status"><span><LoaderCircle className="spin" size={25} /></span><strong>Conectando con tus proyectos…</strong><p>Iniciando el motor local y recuperando tu historial.</p></div>
           ) : !recent.length ? (
             <div className="no-recent"><span><FolderOpen size={25} /></span><strong>Aún no hay proyectos</strong><p>Cuando abras un archivo podrás retomarlo desde aquí.</p></div>
@@ -107,6 +108,7 @@ export function Welcome({ recent, loading = false, onOpen, onOpenRecent, onDelet
                       </span>
                       <span className={`project-status ${status.running ? "running" : ""}`}><i />{status.label}</span>
                     </button>
+                    <button className="recent-reveal" onClick={() => onRevealRecent(project.mediaPath)} aria-label={`Mostrar ${project.name} en su carpeta`} title="Mostrar en carpeta"><FolderOpen size={15} /></button>
                     <button className="recent-delete" onClick={() => { setDeleteError(null); setPendingDelete(project); }} aria-label={`Eliminar ${project.name}`} title="Eliminar proyecto"><Trash2 size={15} /></button>
                   </article>
                 );

@@ -30,14 +30,15 @@ foreach ($Library in $RequiredCTranslateLibraries) {
   }
 }
 $PyInstallerArguments = @(
-  "--noconfirm", "--clean", "--onefile", "--name", "transcriptor-engine",
+  "--noconfirm", "--clean", "--onedir", "--contents-directory", "transcriptor-engine-runtime",
+  "--name", "transcriptor-engine",
   "--distpath", (Join-Path $ProjectRoot "sidecar\dist"),
   "--workpath", (Join-Path $ProjectRoot "sidecar\build"),
   "--specpath", (Join-Path $ProjectRoot "sidecar"),
   "--collect-all", "faster_whisper",
   "--collect-submodules", "ctranslate2",
   "--collect-all", "tokenizers", "--exclude-module", "av",
-  "--collect-all", "onnxruntime", "--collect-all", "kaldi_native_fbank",
+  "--collect-binaries", "onnxruntime", "--collect-all", "kaldi_native_fbank",
   "--collect-all", "docx", "--collect-all", "reportlab"
 )
 foreach ($ExcludedModule in @(
@@ -70,7 +71,12 @@ if (Test-Path -LiteralPath (Join-Path $FfmpegDirectory "ffprobe.exe")) {
 }
 $PyInstallerArguments += (Join-Path $ProjectRoot "sidecar\launcher.py")
 Invoke-CheckedNative uv run --project (Join-Path $ProjectRoot "sidecar") --extra dev pyinstaller @PyInstallerArguments
-$Source = Join-Path $DistPath "transcriptor-engine.exe"
+$SourceDirectory = Join-Path $DistPath "transcriptor-engine"
+$Source = Join-Path $SourceDirectory "transcriptor-engine.exe"
+$RuntimeSource = Join-Path $SourceDirectory "transcriptor-engine-runtime"
+if (-not (Test-Path -LiteralPath $RuntimeSource -PathType Container)) {
+  throw "PyInstaller no generó el runtime de directorio esperado: $RuntimeSource"
+}
 $PreviousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $SidecarArchive = & uv run --project (Join-Path $ProjectRoot "sidecar") --extra dev `
@@ -80,6 +86,12 @@ $ErrorActionPreference = $PreviousErrorActionPreference
 if ($ArchiveViewerExitCode -ne 0) {
   throw "No se pudo inspeccionar el contenido del sidecar."
 }
+$SidecarRuntimeEntries = @(
+  Get-ChildItem -LiteralPath $RuntimeSource -Recurse -File -Force |
+    ForEach-Object {
+      $_.FullName.Substring($RuntimeSource.Length).TrimStart("\", "/")
+    }
+)
 $ForbiddenArchivePatterns = @(
   "^av(?:[./\\]|$)",
   "^(?:pytest|_pytest|ruff|iniconfig|pluggy|pygments|altgraph|pefile|pywin32_ctypes|PyInstaller)(?:[./\\]|$)",
@@ -87,7 +99,7 @@ $ForbiddenArchivePatterns = @(
   "^nvidia(?:[./\\]|$)",
   "(?:^|[./\\])(?:cublas|cudnn|cufft|curand|cusolver|cusparse|nvrtc|nvjitlink)[^/\\]*\.dll$"
 )
-foreach ($ArchiveEntry in $SidecarArchive) {
+foreach ($ArchiveEntry in @($SidecarArchive) + $SidecarRuntimeEntries) {
   $NormalizedEntry = "$ArchiveEntry".Trim()
   foreach ($Pattern in $ForbiddenArchivePatterns) {
     if ($NormalizedEntry -match $Pattern) {
@@ -99,6 +111,22 @@ $BinaryDirectory = Join-Path $ProjectRoot "src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $BinaryDirectory | Out-Null
 $Destination = Join-Path $BinaryDirectory "transcriptor-engine-$TargetTriple.exe"
 Copy-Item -LiteralPath $Source -Destination $Destination -Force
+$RuntimeDestination = Join-Path $BinaryDirectory "transcriptor-engine-runtime"
+$ResolvedRuntimeDestination = [System.IO.Path]::GetFullPath($RuntimeDestination)
+$BinaryDirectoryPrefix = [System.IO.Path]::GetFullPath($BinaryDirectory).TrimEnd(
+  [System.IO.Path]::DirectorySeparatorChar,
+  [System.IO.Path]::AltDirectorySeparatorChar
+) + [System.IO.Path]::DirectorySeparatorChar
+if (-not $ResolvedRuntimeDestination.StartsWith(
+  $BinaryDirectoryPrefix,
+  [System.StringComparison]::OrdinalIgnoreCase
+)) {
+  throw "El runtime del sidecar queda fuera de src-tauri/binaries."
+}
+if (Test-Path -LiteralPath $ResolvedRuntimeDestination) {
+  Remove-Item -LiteralPath $ResolvedRuntimeDestination -Recurse -Force
+}
+Copy-Item -LiteralPath $RuntimeSource -Destination $ResolvedRuntimeDestination -Recurse
 
 # Los binarios redistribuidos deben llevar los textos legales exactos de las
 # dependencias runtime fijadas. El inventario impide arrastrar dependencias de

@@ -1,4 +1,5 @@
 import type { AssistantMessage, CudaRuntimeStatus, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, InsightDepth, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RecordingChunkResult, RecordingSessionResult, RecordingSessionStarted, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison, VoiceProfileMergeResult } from "../types";
+import { cacheHardwareInfo, cacheSpeakerAiStatus, loadCachedHardwareInfo, loadCachedSpeakerAiStatus } from "./localCache";
 
 type EventListener = (event: EngineEvent) => void;
 type PendingRequest = { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: number };
@@ -10,6 +11,8 @@ class EngineClient {
   private starting: Promise<void> | null = null;
   private lineBuffer = "";
   private hasResponded = false;
+  private cachedHardware = loadCachedHardwareInfo();
+  private cachedSpeakerAi = loadCachedSpeakerAiStatus();
 
   get available(): boolean {
     return Boolean(window.__TAURI_INTERNALS__);
@@ -63,6 +66,11 @@ class EngineClient {
   }
 
   private route(event: EngineEvent): void {
+    if (event.type === "speaker_model_completed") {
+      const status = event.payload as SpeakerAiStatus;
+      this.cachedSpeakerAi = status;
+      cacheSpeakerAiStatus(status);
+    }
     if ((event.type === "result" || event.type === "error") && event.requestId) {
       this.hasResponded = true;
       const request = this.pending.get(event.requestId);
@@ -95,7 +103,14 @@ class EngineClient {
   }
 
   analyze(mediaPath: string) { return this.request<Record<string, unknown>>("analyze_media", { mediaPath }, 60_000); }
-  getHardwareInfo() { return this.request<HardwareInfo>("get_hardware_info", {}, 60_000); }
+  getCachedHardwareInfo() { return this.cachedHardware; }
+  getHardwareInfo(refresh = false) {
+    return this.request<HardwareInfo>("get_hardware_info", { refresh }, 60_000).then((hardware) => {
+      this.cachedHardware = hardware;
+      cacheHardwareInfo(hardware);
+      return hardware;
+    });
+  }
   getCudaRuntimeStatus() { return this.request<CudaRuntimeStatus>("get_cuda_runtime_status", {}, 60_000); }
   installCudaRuntime() { return this.request<{ accepted: boolean }>("install_cuda_runtime"); }
   cancelCudaRuntimeDownload() { return this.request<{ cancelled: boolean }>("cancel_cuda_runtime_download"); }
@@ -104,7 +119,14 @@ class EngineClient {
   downloadModel(modelId: string) { return this.request<{ accepted: boolean }>("download_model", { modelId }); }
   cancelModelDownload(modelId: string) { return this.request<{ cancelled: boolean }>("cancel_model_download", { modelId }); }
   deleteModel(modelId: string) { return this.request<{ deleted: boolean; removedBytes: number }>("delete_model", { modelId }); }
-  getSpeakerAiStatus() { return this.request<SpeakerAiStatus>("get_speaker_ai_status"); }
+  getCachedSpeakerAiStatus() { return this.cachedSpeakerAi; }
+  getSpeakerAiStatus() {
+    return this.request<SpeakerAiStatus>("get_speaker_ai_status").then((status) => {
+      this.cachedSpeakerAi = status;
+      cacheSpeakerAiStatus(status);
+      return status;
+    });
+  }
   installSpeakerAi() { return this.request<{ accepted: boolean }>("install_speaker_ai"); }
   cancelSpeakerAiDownload() { return this.request<{ cancelled: boolean }>("cancel_speaker_ai_download"); }
   listVoiceProfiles() { return this.request<VoiceProfileCatalog>("list_voice_profiles"); }

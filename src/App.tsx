@@ -29,7 +29,9 @@ export default function App() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showVoices, setShowVoices] = useState(false);
   const [showModelSetup, setShowModelSetup] = useState(false);
-  const [recentProjectsLoading, setRecentProjectsLoading] = useState(engine.available);
+  const [recentProjectsLoading, setRecentProjectsLoading] = useState(
+    () => engine.available && useAppStore.getState().recentProjects.length === 0,
+  );
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [assistantAnswers, setAssistantAnswers] = useState<AssistantAnswer[]>([]);
@@ -79,7 +81,7 @@ export default function App() {
       const kind = mediaKind(selected);
       if (!kind) throw new Error("Este formato no está admitido. Selecciona un archivo de audio o vídeo compatible.");
       state.setProgress({ state: "analyzing", stage: "preparing", phase: "Analizando el archivo…", message: "Leyendo códec, pistas y duración…" });
-      const metadata = engine.available ? await engine.analyze(selected) : {};
+      let metadata: Record<string, unknown> = {};
       if (engine.available) {
         const saved = await engine.loadProjectForMedia(selected);
         if (saved) {
@@ -87,6 +89,7 @@ export default function App() {
           state.setRecentProjects(await engine.listProjects());
           return;
         }
+        metadata = await engine.analyze(selected);
       }
       const now = new Date().toISOString();
       const project: TranscriptionProject = {
@@ -122,8 +125,10 @@ export default function App() {
       try {
         const kind = mediaKind(selected);
         if (!kind) throw new Error("Formato no compatible");
-        const metadata = await engine.analyze(selected);
         const saved = await engine.loadProjectForMedia(selected);
+        const metadata = saved
+          ? { durationMs: saved.durationMs }
+          : await engine.analyze(selected);
         const now = new Date().toISOString();
         let settings = saved?.settings ?? projectSettingsFromApp(state.settings);
         if (automaticInputs && automaticInputs[0].status === "fulfilled") {
@@ -184,12 +189,17 @@ export default function App() {
       return;
     }
     let active = true;
-    engine.listVoiceProfiles()
-      .then((catalog) => {
-        if (active) useAppStore.getState().setVoiceProfiles(catalog.profiles);
-      })
-      .catch(() => undefined);
-    return () => { active = false; };
+    const timer = window.setTimeout(() => {
+      engine.listVoiceProfiles()
+        .then((catalog) => {
+          if (active) useAppStore.getState().setVoiceProfiles(catalog.profiles);
+        })
+        .catch(() => undefined);
+    }, 300);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => engine.subscribe((event) => {
@@ -266,7 +276,9 @@ export default function App() {
       return;
     }
     let active = true;
-    setRecentProjectsLoading(true);
+    if (useAppStore.getState().recentProjects.length === 0) {
+      setRecentProjectsLoading(true);
+    }
     engine.listProjects()
       .then((projects) => {
         if (active) useAppStore.getState().setRecentProjects(projects);
@@ -496,6 +508,16 @@ export default function App() {
     } catch (error) { store.setError(error instanceof Error ? error.message : String(error)); }
   }
 
+  async function revealRecent(mediaPath: string) {
+    if (!engine.available) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("reveal_media_file", { path: mediaPath });
+    } catch (error) {
+      store.setError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function deleteRecent(id: string) {
     if (!engine.available) throw new Error("La eliminación de proyectos requiere la aplicación de escritorio.");
     await engine.deleteProject(id);
@@ -700,7 +722,7 @@ export default function App() {
     <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(store.project?.insights?.mode ?? "general"); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onRenameProject={renameCurrentProject} onShowProjects={() => store.setProject(null)} />
     {store.error && <div className="error-banner" role="alert"><AlertTriangle size={18} /><span>{store.error}</span><button onClick={() => store.setError(null)} aria-label="Cerrar"><X size={17} /></button></div>}
     {store.notice && !store.error && <div className="notice-banner" role="status"><Info size={18} /><span>{store.notice}</span><button onClick={() => store.setNotice(null)} aria-label="Cerrar aviso"><X size={17} /></button></div>}
-    {!store.project ? <Welcome recent={store.recentProjects} loading={recentProjectsLoading} onOpen={() => engine.available ? openMedia() : document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} onOpenRecent={openRecent} onDeleteRecent={deleteRecent} onDropPath={openMedia} onImportFiles={queueMediaFiles} /> :
+    {!store.project ? <Welcome recent={store.recentProjects} loading={recentProjectsLoading} onOpen={() => engine.available ? openMedia() : document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} onOpenRecent={openRecent} onRevealRecent={revealRecent} onDeleteRecent={deleteRecent} onDropPath={openMedia} onImportFiles={queueMediaFiles} /> :
       <main className={`workspace ${transcriptFocus ? "transcript-focus" : ""}`} style={transcriptFocus ? undefined : { gridTemplateColumns: `${split}% 7px 1fr` }} onPointerMove={(event) => { if (!dragging.current) return; const rect = event.currentTarget.getBoundingClientRect(); setSplit(Math.min(72, Math.max(35, ((event.clientX - rect.left) / rect.width) * 100))); }} onPointerUp={() => { dragging.current = false; }} onPointerLeave={() => { dragging.current = false; }}>
         <div className="player-pane"><div className="media-info"><span>{store.project.mediaType === "video" ? "VÍDEO" : "AUDIO"}</span><strong>{store.project.name}</strong><small>{store.project.mediaPath}</small></div><MediaPlayer key={store.project.id} project={store.project} currentTimeMs={store.currentTimeMs} skipSeconds={store.settings.skipSeconds} onTime={store.setCurrentTime} onPlaying={store.setPlaying} onError={store.setError} seekSignal={seekSignal} /></div>
         <button className="splitter" aria-label="Redimensionar paneles" onKeyDown={(event) => { if (event.key === "ArrowLeft") setSplit((value) => Math.max(35, value - 2)); if (event.key === "ArrowRight") setSplit((value) => Math.min(72, value + 2)); }} onPointerDown={(event) => { dragging.current = true; event.currentTarget.setPointerCapture(event.pointerId); }} />

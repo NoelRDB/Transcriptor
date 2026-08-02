@@ -103,6 +103,7 @@ if ([string]$TauriConfig.bundle.windows.nsis.installMode -ne "currentUser") {
 }
 $ConfiguredResources = @($TauriConfig.bundle.resources.PSObject.Properties.Name)
 foreach ($RequiredResource in @(
+  "binaries/transcriptor-engine-runtime/",
   "resources/licenses/",
   "../LICENSE",
   "../docs/THIRD_PARTY_NOTICES.md"
@@ -202,6 +203,7 @@ try {
 
   $ExpectedIgnoredPaths = @(
     "sidecar/ffmpeg/ffmpeg.exe",
+    "src-tauri/binaries/transcriptor-engine-runtime/python312.dll",
     "src-tauri/resources/cuda/cublas64_12.dll",
     "src-tauri/target/release/transcriptor.exe",
     "recordings/private.wav",
@@ -513,7 +515,7 @@ if ($RequireRuntimeAssets) {
   $RuntimeFiles = @(
     @{
       Path = Join-Path $ProjectRoot "src-tauri\binaries\transcriptor-engine-x86_64-pc-windows-msvc.exe"
-      MinimumBytes = 10MB
+      MinimumBytes = 1MB
     },
     @{ Path = Join-Path $ProjectRoot "sidecar\ffmpeg\ffmpeg.exe"; MinimumBytes = 1MB },
     @{ Path = Join-Path $ProjectRoot "sidecar\ffmpeg\ffprobe.exe"; MinimumBytes = 1MB },
@@ -537,12 +539,26 @@ if ($RequireRuntimeAssets) {
     }
   }
   $SidecarPath = $RuntimeFiles[0].Path
+  $SidecarRuntimeDirectory = Join-Path $ProjectRoot "src-tauri\binaries\transcriptor-engine-runtime"
+  if (-not (Test-Path -LiteralPath $SidecarRuntimeDirectory -PathType Container)) {
+    throw "Falta el runtime instalado junto al sidecar: $SidecarRuntimeDirectory"
+  }
+  $SidecarRuntimeFiles = @(
+    Get-ChildItem -LiteralPath $SidecarRuntimeDirectory -Recurse -File -Force
+  )
+  $SidecarRuntimeBytes = ($SidecarRuntimeFiles | Measure-Object Length -Sum).Sum
+  if ($SidecarRuntimeFiles.Count -lt 10 -or $SidecarRuntimeBytes -lt 50MB) {
+    throw "El runtime de directorio del sidecar parece incompleto."
+  }
   $SidecarArchive = & uv run --project (Join-Path $ProjectRoot "sidecar") --extra dev `
     pyi-archive_viewer -l $SidecarPath 2>&1
   if ($LASTEXITCODE -ne 0) {
     throw "No se pudo inspeccionar el contenido del sidecar público."
   }
-  $SidecarArchiveText = $SidecarArchive -join "`n"
+  $SidecarArchiveText = @(
+    $SidecarArchive
+    $SidecarRuntimeFiles | ForEach-Object { $_.FullName }
+  ) -join "`n"
   $ForbiddenSidecarPatterns = @(
     "(?im)(?:^|[./\\])av(?:[./\\]|$)",
     "(?im)(?:^|[./\\])(?:pytest|_pytest|ruff|iniconfig|pluggy|pygments|altgraph|pefile|pywin32_ctypes|PyInstaller)(?:[./\\]|$)",
@@ -1263,7 +1279,8 @@ function Assert-PayloadAndSidecarAreClean {
   param(
     [Parameter(Mandatory = $true)][System.IO.FileInfo]$Installer,
     [Parameter(Mandatory = $true)][string]$PayloadDirectory,
-    [Parameter(Mandatory = $true)][string]$ExpectedSidecarPath
+    [Parameter(Mandatory = $true)][string]$ExpectedSidecarPath,
+    [Parameter(Mandatory = $true)][string]$ExpectedRuntimeDirectory
   )
 
   $PayloadFiles = @(Get-ChildItem -LiteralPath $PayloadDirectory -Recurse -File)
@@ -1337,6 +1354,20 @@ function Assert-PayloadAndSidecarAreClean {
   if ($ExpectedSidecarHash -cne $PayloadSidecarHash) {
     throw "$($Installer.Name) contiene un sidecar distinto del binario construido y auditado."
   }
+  $PayloadRuntimeDirectories = @(
+    Get-ChildItem -LiteralPath $PayloadDirectory -Recurse -Directory -Force |
+      Where-Object { $_.Name -ieq "transcriptor-engine-runtime" }
+  )
+  if ($PayloadRuntimeDirectories.Count -ne 1) {
+    throw (
+      "$($Installer.Name) debe contener exactamente un runtime del sidecar; " +
+      "encontrados: $($PayloadRuntimeDirectories.Count)."
+    )
+  }
+  Assert-ExactDirectoryTreeMatch `
+    -ReferenceDirectory $ExpectedRuntimeDirectory `
+    -ActualDirectory $PayloadRuntimeDirectories[0].FullName `
+    -Description "runtime instalado del sidecar"
 
   $ArchiveViewer = Join-Path $ProjectRoot (
     "sidecar\.venv\Scripts\pyi-archive_viewer.exe"
@@ -1507,6 +1538,9 @@ if ($RequireInstallerPayloadInspection) {
   $ExpectedSidecarPath = Join-Path $ProjectRoot (
     "src-tauri\binaries\transcriptor-engine-x86_64-pc-windows-msvc.exe"
   )
+  $ExpectedRuntimeDirectory = Join-Path $ProjectRoot (
+    "src-tauri\binaries\transcriptor-engine-runtime"
+  )
   $TemporaryRoot = Join-Path (
     [System.IO.Path]::GetTempPath()
   ) "transcriptor-installer-audit-$([guid]::NewGuid().ToString('N'))"
@@ -1533,14 +1567,16 @@ if ($RequireInstallerPayloadInspection) {
     Assert-PayloadAndSidecarAreClean `
       -Installer $NsisInstallers[0] `
       -PayloadDirectory $NsisPayload `
-      -ExpectedSidecarPath $ExpectedSidecarPath
+      -ExpectedSidecarPath $ExpectedSidecarPath `
+      -ExpectedRuntimeDirectory $ExpectedRuntimeDirectory
 
     $MsiPayload = Join-Path $ResolvedTemporaryRoot "msi"
     Expand-MsiPayload $MsiInstallers[0] $MsiPayload
     Assert-PayloadAndSidecarAreClean `
       -Installer $MsiInstallers[0] `
       -PayloadDirectory $MsiPayload `
-      -ExpectedSidecarPath $ExpectedSidecarPath
+      -ExpectedSidecarPath $ExpectedSidecarPath `
+      -ExpectedRuntimeDirectory $ExpectedRuntimeDirectory
   }
   finally {
     if (

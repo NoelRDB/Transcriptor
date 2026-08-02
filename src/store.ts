@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AppSettings, JobProgress, ProjectInsights, RecentProject, TranscriptSegment, TranscriptionProject, VoiceProfile } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
+import { cacheRecentProjects, loadCachedRecentProjects } from "./lib/localCache";
 
 type HistoryEntry =
   | {
@@ -53,7 +54,7 @@ const initialProgress: JobProgress = { state: "idle", phase: "Preparado", proces
 
 export const useAppStore = create<AppState>((set, get) => ({
   project: null,
-  recentProjects: [],
+  recentProjects: loadCachedRecentProjects(),
   voiceProfiles: null,
   settings: loadSettings(),
   progress: initialProgress,
@@ -66,7 +67,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   future: [],
   setProject: (project) => set({ project, currentTimeMs: project?.lastPlaybackPositionMs ?? 0, progress: project ? { ...initialProgress, state: project.transcriptionStatus } : initialProgress, isDirty: false, history: [], future: [], error: null }),
   updateProjectSettings: (settings) => set((state) => state.project ? ({ project: { ...state.project, settings: { ...state.project.settings, ...settings }, updatedAt: new Date().toISOString() }, isDirty: true }) : {}),
-  setRecentProjects: (recentProjects) => set({ recentProjects }),
+  setRecentProjects: (recentProjects) => {
+    cacheRecentProjects(recentProjects);
+    set({ recentProjects });
+  },
   setVoiceProfiles: (voiceProfiles) => set({ voiceProfiles }),
   setSettings: (partial) => set((state) => {
     const settings = { ...state.settings, ...partial };

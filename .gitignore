@@ -17,8 +17,10 @@ sidecar/dist/
 sidecar/*.spec
 sidecar/ffmpeg/
 src-tauri/target/
+src-tauri/target-*/
 src-tauri/binaries/*.exe
 src-tauri/binaries/*-x86_64-*
+src-tauri/binaries/transcriptor-engine-runtime/
 src-tauri/resources/cuda/*.dll
 src-tauri/resources/licenses/
 *.sqlite3

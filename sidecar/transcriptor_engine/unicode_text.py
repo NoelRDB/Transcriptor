@@ -5,6 +5,8 @@ from typing import Any
 
 def sanitize_text(value: str) -> str:
     """Replace isolated UTF-16 surrogates while preserving every valid Unicode character."""
+    if value.isascii():
+        return value
     return "".join("\ufffd" if 0xD800 <= ord(character) <= 0xDFFF else character for character in value)
 
 
@@ -21,10 +23,14 @@ def repair_mojibake(value: str) -> str:
     A conversion is accepted only when it strictly reduces common corruption markers,
     so legitimate Spanish and names containing these characters are left untouched.
     """
+    if value.isascii():
+        return value
     best = sanitize_text(value)
     # An early build replaced the second byte of "África" before saving it.
     # This exact residual form cannot be recovered by a generic UTF-8 roundtrip.
     best = best.replace("\u00c3\ufffdfrica", "África")
+    if _mojibake_score(best) == 0:
+        return best
     for _ in range(2):
         current_score = _mojibake_score(best)
         candidates: list[str] = []
