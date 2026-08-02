@@ -595,8 +595,17 @@ if ($RequireRuntimeAssets) {
   $TrackedLgplText = [System.IO.File]::ReadAllText(
     (Join-Path $ProjectRoot "docs\licenses\LGPL-3.0.txt")
   )
-  $NormalizedFfmpegLicense = $FfmpegLicenseText.Replace("`r`n", "`n").TrimEnd() + "`n"
-  $NormalizedTrackedLgpl = $TrackedLgplText.Replace("`r`n", "`n").TrimEnd() + "`n"
+  # La copia histórica que distribuye FFmpeg conserva http://fsf.org/ y la
+  # copia documental actual usa https://fsf.org/. El contenido legal restante
+  # debe continuar coincidiendo exactamente.
+  $NormalizedFfmpegLicense = $FfmpegLicenseText.Replace("`r`n", "`n").Replace(
+    "http://fsf.org/",
+    "https://fsf.org/"
+  ).TrimEnd() + "`n"
+  $NormalizedTrackedLgpl = $TrackedLgplText.Replace("`r`n", "`n").Replace(
+    "http://fsf.org/",
+    "https://fsf.org/"
+  ).TrimEnd() + "`n"
   if ($NormalizedFfmpegLicense -cne $NormalizedTrackedLgpl) {
     throw "LICENSE.txt no coincide con el texto LGPL v3 completo y versionado."
   }
