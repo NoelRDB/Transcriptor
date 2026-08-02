@@ -210,7 +210,7 @@ if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
   echo "FFMPEG_BUILD_JOBS debe ser un entero positivo." >&2
   exit 2
 fi
-make -j"$JOBS" ffmpeg ffprobe
+make -j"$JOBS" ffmpeg.exe ffprobe.exe
 popd >/dev/null
 
 for executable_name in ffmpeg.exe ffprobe.exe; do
@@ -307,7 +307,7 @@ cp "$MINGW_RUNTIME_COPYRIGHT" \
   echo "Desde esta carpeta:"
   echo "  mkdir build && cd build"
   echo "  ../$SOURCE_TREE_NAME/configure ${CONFIGURE_ARGUMENTS[*]}"
-  echo "  make -j\$(nproc) ffmpeg ffprobe"
+  echo "  make -j\$(nproc) ffmpeg.exe ffprobe.exe"
   echo
   echo "El script build-ffmpeg-windows.sh conserva también la descarga fijada,"
   echo "la auditoría de DLL importadas y el empaquetado reproducible."
