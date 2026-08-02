@@ -426,7 +426,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          npm run tauri -- build `
+          & ".\node_modules\.bin\tauri.cmd" build `
             --ci `
             --no-sign `
             --target $env:TARGET_TRIPLE `
