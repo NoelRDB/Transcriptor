@@ -430,9 +430,7 @@ jobs:
             --ci `
             --no-sign `
             --target $env:TARGET_TRIPLE `
-            --bundles nsis,msi `
-            -- `
-            --locked
+            --bundles nsis,msi
           if ($LASTEXITCODE -ne 0) {
             throw "Tauri no pudo construir ambos instaladores."
           }
