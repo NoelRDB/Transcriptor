@@ -58,35 +58,26 @@ comando real de extracción PCM mono a 16 kHz y la edición con remuestreo,
 
 ## Runtime CTranslate2 CPU
 
-El instalador no acepta el DLL del *wheel* binario oficial de CTranslate2. La
-cadena de publicación construye un runtime Windows x64 desde fuentes fijadas
-de CTranslate2, oneDNN y LLVM, con CUDA, cuDNN y oneMKL desactivados. La
-inferencia CPU usa oneDNN y la paralelización usa `libomp.dll`, el runtime
-abierto LLVM OpenMP.
+El sidecar incorpora CTranslate2 4.8.1 desde el entorno reproducible fijado por
+`uv.lock`. El runtime Windows de esa distribución necesita Intel OpenMP, por lo
+que se empaqueta `libiomp5md.dll` junto con el texto completo de la Intel
+Simplified Software License. CUDA, cuDNN y cuBLAS no forman parte del sidecar
+ni del instalador base.
 
-El artefacto intermedio contiene los DLL fijados de CTranslate2, oneDNN y LLVM
-OpenMP, sus licencias y `CTRANSLATE2-OSS-RUNTIME.json`. El marcador enlaza cada
-DLL con su SHA-256 y tamaño, los commits de CTranslate2, oneDNN, LLVM y
-submódulos y todas las opciones de compilación relevantes.
-`build-sidecar.ps1` sólo empaqueta ese conjunto exacto si el marcador coincide.
-
-`verify-release.ps1` vuelve a comprobar el marcador y los hashes tanto antes
-de empaquetar como dentro del archivo PyInstaller. También audita las
-importaciones PE y rechaza DLL o importaciones de CUDA, NVIDIA, oneMKL, Intel
-OpenMP, `libiomp` o Visual C++ OpenMP. CTranslate2 conserva mensajes
-diagnósticos que dicen explícitamente que CUDA/oneMKL no se compilaron y el
-identificador del fabricante de CPU; buscar palabras sueltas produciría
-falsos positivos y no sustituye la procedencia criptográfica. La aceleración GPU
-se mantiene como instalación opcional posterior y nunca reutiliza el runtime
-CPU del instalador para justificar componentes propietarios.
+`build-sidecar.ps1` crea un ejecutable autocontenido con PyInstaller y copia el
+inventario y las licencias del runtime. `verify-release.ps1` comprueba esos
+archivos tanto en el árbol de preparación como en el contenido del ejecutable,
+rechaza bibliotecas CUDA y bloquea la publicación si faltan avisos o si el
+inventario no coincide. La aceleración NVIDIA es una instalación opcional
+posterior, separada del instalador CPU y solicitada expresamente por el usuario.
 
 `build-sidecar.ps1` incorpora los ejecutables y recopila los avisos mediante
 `collect-runtime-licenses.ps1`. El inventario cerrado impide incluir PyAV o
 dependencias de desarrollo; las rutas se conservan para evitar colisiones y
 `PYTHON-RUNTIME-LICENSES.json` registra cada SHA-256. Además se empaquetan
 GPL-3.0, LGPL-3.0, el aviso FFmpeg, su manifiesto de fuente, las licencias del
-runtime GCC/MinGW-w64, las licencias del runtime CTranslate2/oneDNN/LLVM y su
-marcador de procedencia. `verify-release.ps1`
+runtime GCC/MinGW-w64 y la licencia del runtime Intel OpenMP.
+`verify-release.ps1`
 exige que inventario, archivos y hashes coincidan antes de construir
 instaladores.
 

@@ -166,6 +166,21 @@ if (-not (Test-Path -LiteralPath $FfmpegSourceManifest -PathType Leaf)) {
 Copy-Item -LiteralPath $FfmpegSourceManifest `
   -Destination (Join-Path $RuntimeLicenseDirectory "FFmpeg-BUILD-SOURCE.txt") -Force
 
+$FfmpegToolchainNotices = @{
+  "GCC-RUNTIME-LICENSES.txt" = "FFmpeg-GCC-RUNTIME-LICENSES.txt"
+  "MINGW-W64-LICENSES.txt" = "FFmpeg-MINGW-W64-LICENSES.txt"
+}
+foreach ($SourceNoticeName in $FfmpegToolchainNotices.Keys) {
+  $SourceNotice = Join-Path $FfmpegDirectory $SourceNoticeName
+  if (-not (Test-Path -LiteralPath $SourceNotice -PathType Leaf)) {
+    throw "Falta el aviso de toolchain FFmpeg $SourceNoticeName."
+  }
+  Copy-Item -LiteralPath $SourceNotice `
+    -Destination (
+      Join-Path $RuntimeLicenseDirectory $FfmpegToolchainNotices[$SourceNoticeName]
+    ) -Force
+}
+
 $IntelRuntimeLicense = Join-Path $ProjectRoot "docs\licenses\INTEL-SIMPLIFIED-SOFTWARE-LICENSE.txt"
 if (-not (Test-Path -LiteralPath $IntelRuntimeLicense -PathType Leaf)) {
   throw "Falta la licencia completa del runtime Intel OpenMP."

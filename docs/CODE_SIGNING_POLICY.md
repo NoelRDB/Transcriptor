@@ -116,20 +116,15 @@ las compilaciones actuales de `master`, la aceleración NVIDIA se prepara
 mediante una descarga opcional posterior, solicitada por el usuario y
 almacenada fuera del instalador. La evaluación deberá confirmar que este límite
 de alcance, junto con cualquier otro runtime o modelo, cumple la política
-concedida. El paquete no usa el runtime binario oficial de CTranslate2 ni
-conserva `libiomp5md.dll`. En su lugar construye `ctranslate2.dll` desde la
-fuente fijada con CUDA, cuDNN y oneMKL desactivados. La ruta CPU usa oneDNN y
-el runtime `libomp.dll` de LLVM, ambos abiertos y construidos desde fuentes
-fijadas. Un marcador versionado registra commits, opciones de compilación,
-submódulos, tamaños y SHA-256.
+concedida. El paquete CPU usa CTranslate2 4.8.1 desde el entorno fijado por
+`uv.lock` e incluye `libiomp5md.dll`, con la licencia Intel Simplified Software
+License conservada dentro del instalador. Los inventarios versionados registran
+las versiones y los SHA-256 de los avisos legales.
 
-La publicación queda bloqueada si ese marcador no coincide, si las
-importaciones PE salen de la lista de sistema, MSVC, oneDNN y LLVM OpenMP o si
-aparece un runtime CUDA, oneMKL, Intel OpenMP o Visual C++ OpenMP. Los mensajes
-diagnósticos negativos incluidos por CTranslate2 no acreditan una dependencia;
-la evidencia vinculante son los hashes, opciones, DLL e importaciones. La
-existencia de este documento no presupone que el paquete cumpla ya todos los
-criterios de SignPath.
+La publicación queda bloqueada si esos inventarios no coinciden o si aparece
+un runtime CUDA o NVIDIA dentro del instalador. La existencia de este documento
+no presupone que el paquete cumpla ya todos los criterios de SignPath; la
+elegibilidad de Intel OpenMP deberá confirmarse expresamente durante su revisión.
 
 El bootstrapper propietario de Microsoft WebView2 tampoco se incorpora al
 artefacto candidato. Tauri usa el modo `skip`: WebView2 es un requisito del

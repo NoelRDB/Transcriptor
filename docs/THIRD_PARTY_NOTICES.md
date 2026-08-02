@@ -7,18 +7,13 @@ El código propio de Transcriptor se distribuye bajo MIT. Las dependencias conse
 - Zustand: MIT.
 - Lucide: ISC.
 - Faster-Whisper: MIT.
-- CTranslate2: MIT. Las compilaciones posteriores a `v0.1.0` no redistribuyen
-  el runtime binario oficial para Windows. El runtime CPU se compila desde la
-  fuente fijada de CTranslate2 con CUDA, cuDNN y oneMKL desactivados. La ruta
-  CPU usa versiones fijadas de oneDNN y LLVM OpenMP, ambas abiertas. El
-  instalador conserva las licencias y avisos de CTranslate2, oneDNN y LLVM,
-  además de
-  `CTRANSLATE2-OSS-RUNTIME.json`, que registra versiones, commits, opciones de
-  compilación, submódulos, tamaños y SHA-256 de cada DLL del runtime.
-- oneDNN: Apache-2.0. La compilación CPU usa una versión y commit fijados, y
-  conserva `LICENSE` y `THIRD-PARTY-PROGRAMS` junto al marcador del runtime.
-- LLVM OpenMP: Apache-2.0 con LLVM exception. `libomp.dll` se construye desde
-  una etiqueta y commit fijados y conserva los textos legales de su fuente.
+- CTranslate2: MIT. El sidecar incorpora la versión 4.8.1 desde el entorno
+  reproducible fijado por `uv.lock` y conserva su licencia dentro del
+  inventario legal del runtime Python.
+- Intel OpenMP: Intel Simplified Software License. La distribución Windows de
+  CTranslate2 necesita `libiomp5md.dll`; el instalador conserva el texto
+  completo de la licencia. Su aceptación para una futura firma gratuita queda
+  condicionada a la revisión expresa de SignPath Foundation.
 - PyAV: BSD-3-Clause. Faster-Whisper lo declara como dependencia, pero las
   compilaciones actuales de `master` no empaquetan PyAV ni sus bibliotecas
   FFmpeg: Transcriptor decodifica con el FFmpeg LGPL fijado y verificado. La
@@ -69,9 +64,9 @@ El código propio de Transcriptor se distribuye bajo MIT. Las dependencias conse
   rutas, añade los textos ausentes de FlatBuffers, Tokenizers y ONNX Runtime
   desde fuentes fijadas, incluye las licencias de Python y del bootloader de
   PyInstaller y genera `PYTHON-RUNTIME-LICENSES.json` con un SHA-256 por
-  archivo. Las licencias y la procedencia del runtime CTranslate2 CPU
-  construido por el proyecto se conservan por separado bajo
-  `ctranslate2-oss/`. PyAV y las dependencias de desarrollo quedan excluidas.
+  archivo. La licencia adicional del runtime Intel OpenMP se conserva en la
+  raíz legal del sidecar. PyAV y las dependencias de desarrollo quedan
+  excluidas.
 - python-docx: MIT.
 - ReportLab: BSD-3-Clause.
 - ONNX Runtime: MIT.
@@ -115,19 +110,17 @@ artefacto Windows y clasificar cada archivo como:
   de SignPath.
 
 La revisión debe prestar atención especial a cuBLAS, cuDNN, otros binarios de
-NVIDIA, WebView2, PyInstaller, FFmpeg/FFprobe, CTranslate2, LLVM OpenMP y
+NVIDIA, WebView2, PyInstaller, FFmpeg/FFprobe, CTranslate2, Intel OpenMP y
 cualquier peso de modelo. Los binarios de terceros no recibirán una firma que los identifique
 como código propio de Transcriptor. En el diseño actual de `master`, cuBLAS,
 cuDNN y las bibliotecas binarias de PyAV quedan fuera del artefacto futuro que
 se presentaría a SignPath. CUDA sólo se descarga después si el usuario lo
 solicita, con tamaño, progreso, cancelación/reintento y SHA-256 fijado.
-El runtime CPU de CTranslate2 se construye desde fuente con componentes
-propietarios desactivados, oneDNN y LLVM OpenMP; la auditoría comprueba su
-marcador de procedencia, los hashes de todos los DLL y las importaciones PE
-antes de aceptar el instalador. Los mensajes diagnósticos negativos que
-explican que CUDA o oneMKL no fueron compilados no se confunden con una
-dependencia: la comprobación vinculante es el conjunto exacto de DLL, hashes e
-importaciones.
+El runtime CPU de CTranslate2 procede del entorno fijado por `uv.lock` e
+incluye Intel OpenMP con su licencia. La auditoría comprueba los inventarios y
+rechaza bibliotecas CUDA antes de aceptar el instalador. La comprobación
+vinculante es el contenido real del paquete y sus avisos, no una afirmación
+documental.
 
 La solicitud está pendiente y no hay aprobación. `v0.1.0` se distribuye sin
 firma de código, contiene el runtime CUDA heredado y **no es candidata a

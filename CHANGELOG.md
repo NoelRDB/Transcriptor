@@ -9,9 +9,9 @@ Todos los cambios relevantes se documentan aquí. El proyecto sigue versionado s
 - Candidata pública limpia para la evaluación de firma gratuita de SignPath.
 - CUDA deja de formar parte del instalador y pasa a ser una descarga opcional,
   separada, consentida, verificable y con fallback completo a CPU.
-- El runtime CPU de CTranslate2 se construye desde fuentes fijadas, sin CUDA,
-  oneMKL ni Intel OpenMP; oneDNN, LLVM OpenMP, el marcador de procedencia y los
-  hashes de cada DLL se auditan antes de publicar.
+- El runtime CPU de CTranslate2 4.8.1 procede del entorno fijado por `uv.lock`;
+  su inventario, la licencia de Intel OpenMP y la ausencia de bibliotecas CUDA
+  se auditan antes de publicar.
 - PyAV y su FFmpeg GPL heredado dejan de empaquetarse; la decodificación usa el
   FFmpeg LGPL fijado, con fuentes, licencias y avisos reproducibles.
 - WebView2 pasa a ser un requisito del sistema: el instalador no incorpora ni

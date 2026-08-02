@@ -71,11 +71,10 @@ El instalador configura automáticamente:
 - FFmpeg y FFprobe para leer audio y vídeo;
 - las bibliotecas necesarias para transcribir con CPU.
 
-El runtime CPU de CTranslate2 se construye desde fuentes fijadas para esta
-aplicación. No contiene CUDA, oneMKL ni Intel OpenMP: utiliza oneDNN y LLVM
-OpenMP abiertos y conserva dentro del instalador el marcador de procedencia y
-los SHA-256 de sus DLL. La cadena de publicación rechaza el instalador si esa
-evidencia no coincide.
+El runtime CPU de CTranslate2 procede del entorno reproducible fijado por
+`uv.lock` e incluye Intel OpenMP, necesario en Windows. El instalador conserva
+sus inventarios y licencias, no contiene CUDA y la cadena de publicación se
+detiene si esa evidencia no coincide.
 
 Windows 10/11 normalmente ya incorpora Microsoft Edge WebView2. El instalador
 de Transcriptor no contiene ni descarga su bootstrapper. Si WebView2 no está

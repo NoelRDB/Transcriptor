@@ -287,9 +287,9 @@ print(
   )
   if (
     $NormalizedRuntimeImports.Count -lt 1 -or
-    "libomp.dll" -notin $NormalizedRuntimeImports
+    "libiomp5md.dll" -notin $NormalizedRuntimeImports
   ) {
-    throw "El marcador CTranslate2 debe declarar el runtime abierto libomp.dll."
+    throw "El inventario CTranslate2 debe declarar el runtime Intel libiomp5md.dll."
   }
   if ($Imports.Count -lt 1) {
     throw "ctranslate2.dll no declara importaciones PE auditables."
@@ -327,7 +327,7 @@ print(
   )
   if ($UnexpectedImports.Count -gt 0) {
     throw (
-      "ctranslate2.dll importa bibliotecas fuera de sistema/MSVC/LLVM OpenMP:`n" +
+      "ctranslate2.dll importa bibliotecas fuera de sistema/MSVC/Intel OpenMP:`n" +
       ($UnexpectedImports -join "`n")
     )
   }
@@ -352,9 +352,9 @@ function Get-PyInstallerCTranslate2Records {
   if (
     $NormalizedExpectedNames.Count -lt 2 -or
     "ctranslate2/ctranslate2.dll" -notin $NormalizedExpectedNames -or
-    "ctranslate2/libomp.dll" -notin $NormalizedExpectedNames
+    "ctranslate2/libiomp5md.dll" -notin $NormalizedExpectedNames
   ) {
-    throw "El marcador no declara un conjunto CTranslate2 OSS completo."
+    throw "El inventario no declara un conjunto CTranslate2 CPU completo."
   }
 
   $Inspector = @'
@@ -405,7 +405,7 @@ print(json.dumps(entries, sort_keys=True, separators=(",", ":")))
   $RecordNames = @($Records.PSObject.Properties.Name)
   foreach ($ExpectedRecordName in $NormalizedExpectedNames) {
     if ($ExpectedRecordName -notin $RecordNames) {
-      throw "El sidecar no contiene el runtime abierto requerido: $ExpectedRecordName"
+      throw "El sidecar no contiene el runtime CPU requerido: $ExpectedRecordName"
     }
   }
   if ($RecordNames.Count -ne $NormalizedExpectedNames.Count) {
@@ -547,7 +547,6 @@ if ($RequireRuntimeAssets) {
     "(?im)(?:^|[./\\])av(?:[./\\]|$)",
     "(?im)(?:^|[./\\])(?:pytest|_pytest|ruff|iniconfig|pluggy|pygments|altgraph|pefile|pywin32_ctypes|PyInstaller)(?:[./\\]|$)",
     "(?im)(?:^|[./\\])(?:cublas|cudnn|cufft|curand|cusolver|cusparse|nvrtc|nvjitlink)[^/\\]*\.dll$",
-    "(?im)(?:^|[./\\])(?:lib)?iomp[^/\\]*\.dll$",
     "(?im)(?:^|[./\\])vcomp[^/\\]*\.dll$"
   )
   foreach ($ForbiddenSidecarPattern in $ForbiddenSidecarPatterns) {
@@ -694,7 +693,7 @@ if ($RequireRuntimeAssets) {
     "FFmpeg-MINGW-W64-LICENSES.txt",
     "GPL-3.0.txt",
     "LGPL-3.0.txt",
-    "CTRANSLATE2-OSS-RUNTIME.json",
+    "INTEL-SIMPLIFIED-SOFTWARE-LICENSE.txt",
     "PYTHON-RUNTIME-INVENTORY.json",
     "PYTHON-RUNTIME-LICENSES.json"
   )) {
@@ -710,6 +709,8 @@ if ($RequireRuntimeAssets) {
     "FFmpeg-MINGW-W64-LICENSES.txt" = $FfmpegMingwRuntimeLicensesPath
     "GPL-3.0.txt" = Join-Path $ProjectRoot "docs\licenses\GPL-3.0.txt"
     "LGPL-3.0.txt" = Join-Path $ProjectRoot "docs\licenses\LGPL-3.0.txt"
+    "INTEL-SIMPLIFIED-SOFTWARE-LICENSE.txt" = Join-Path $ProjectRoot `
+      "docs\licenses\INTEL-SIMPLIFIED-SOFTWARE-LICENSE.txt"
     "PYTHON-RUNTIME-INVENTORY.json" = Join-Path $ProjectRoot `
       "docs\licenses\PYTHON-RUNTIME-INVENTORY.json"
   }
@@ -897,7 +898,7 @@ if ($RequireRuntimeAssets) {
     "FFmpeg-LICENSE.txt",
     "FFmpeg-MINGW-W64-LICENSES.txt",
     "GPL-3.0.txt",
-    "CTRANSLATE2-OSS-RUNTIME.json",
+    "INTEL-SIMPLIFIED-SOFTWARE-LICENSE.txt",
     "LGPL-3.0.txt",
     "PYTHON-RUNTIME-INVENTORY.json",
     "PYTHON-RUNTIME-LICENSES.json"
@@ -1123,18 +1124,6 @@ function Assert-PayloadLicensesMatch {
   if ($RuntimeLicenseFiles.Count -eq 0) {
     throw "El árbol legal runtime está vacío."
   }
-  $ForbiddenStandaloneNotices = @(
-    $RuntimeLicenseFiles |
-      Where-Object {
-        $_.Name -ieq "INTEL-SIMPLIFIED-SOFTWARE-LICENSE.txt"
-      }
-  )
-  if ($ForbiddenStandaloneNotices.Count -gt 0) {
-    throw (
-      "El runtime CTranslate2 abierto no puede conservar el aviso autónomo " +
-      "del runtime Intel retirado."
-    )
-  }
   foreach ($SourceFile in $RuntimeLicenseFiles) {
     if (
       -not $SourceFile.FullName.StartsWith(
@@ -1156,7 +1145,13 @@ function Assert-PayloadLicensesMatch {
 
   foreach ($RootLicense in @(
     @{
-      Key = "licenses/Transcriptor-MIT.txt"
+      # NSIS aplica el destino configurado; WiX conserva el nombre fuente.
+      Key = if ($Installer.Extension -ieq ".msi") {
+        "licenses/LICENSE"
+      }
+      else {
+        "licenses/Transcriptor-MIT.txt"
+      }
       Source = Join-Path $ProjectRoot "LICENSE"
     },
     @{
@@ -1300,7 +1295,6 @@ function Assert-PayloadAndSidecarAreClean {
     "(?i)^cudnn.*\.dll$",
     "(?i)^cu(?:fft|rand|solver|sparse).*\.dll$",
     "(?i)^nv(?:blas|rtc|jitlink|jpeg).*\.dll$",
-    "(?i)^(?:lib)?iomp.*\.dll$",
     "(?i)^vcomp.*\.dll$",
     "(?i)^(?:lib)?av(?:codec|device|filter|format|util|resample|swresample|swscale).*\.(?:dll|pyd)$",
     "(?i)^(?:lib)?x26[45].*\.(?:dll|pyd)$"
@@ -1365,7 +1359,6 @@ function Assert-PayloadAndSidecarAreClean {
     "(?i)cublas(?:lt)?64",
     "(?i)cudnn(?:_[a-z]+)?64",
     "(?i)nv(?:rtc|jitlink|blas|jpeg)64",
-    "(?i)(?:lib)?iomp[^/\\]*\.dll",
     "(?i)(?:^|[/\\])vcomp[^/\\]*\.dll",
     "(?i)(?:^|[^a-z0-9])av(?:$|[^a-z0-9])",
     "(?i)(?:lib)?av(?:codec|device|filter|format|util|resample|swresample|swscale)",

@@ -111,8 +111,8 @@ rechazan. El flujo `.github/workflows/release-windows.yml`:
    extracción/edición;
 4. audita privacidad;
 5. ejecuta lint, tipos y pruebas;
-6. construye y audita el runtime CTranslate2 CPU desde fuentes fijadas y crea
-   el sidecar autocontenido;
+6. construye y audita el sidecar CTranslate2 CPU desde dependencias fijadas y
+   crea el ejecutable autocontenido;
 7. genera NSIS y MSI;
 8. crea una GitHub Release en borrador;
 9. valida formatos, runtime, inventario legal, payload, tamaños y sumas
@@ -138,14 +138,11 @@ Foundation no ha aprobado ni firmado Transcriptor. El workflow actual de
 firmados hasta que exista una aprobación y una firma verificable. Cada Release
 debe describir su estado sin ambigüedad.
 
-> **Puerta del runtime CPU:** no crees ni subas un tag estable si no se ha
-> construido el runtime CTranslate2 CPU abierto y fijado. El workflow debe
-> encontrar `CTRANSLATE2-OSS-RUNTIME.json`, verificar el hash y tamaño de cada
-> DLL de CTranslate2, oneDNN y LLVM OpenMP, comprobar sus importaciones y
-> rechazar cualquier DLL o importación de CUDA, NVIDIA, Intel OpenMP, Visual
-> C++ OpenMP u oneMKL.
-> El DLL oficial del *wheel*, `libiomp5md.dll` y el runtime CUDA no son
-> artefactos publicables.
+> **Puerta del runtime CPU:** no crees ni subas un tag estable si el sidecar no
+> procede del entorno fijado por `uv.lock`. El workflow debe encontrar los
+> inventarios `PYTHON-RUNTIME-INVENTORY.json` y
+> `PYTHON-RUNTIME-LICENSES.json`, comprobar sus avisos —incluido Intel
+> OpenMP— y rechazar cualquier biblioteca CUDA o NVIDIA dentro del instalador.
 
 ### Procedimiento condicionado a la aprobación de SignPath
 
@@ -188,8 +185,8 @@ Antes de anunciar una versión:
 - instala el `setup.exe` en un usuario de Windows limpio;
 - importa MP3, WAV y MP4;
 - prueba CPU y, si es posible, NVIDIA/CUDA;
-- confirma que el instalador CPU conserva el marcador de procedencia
-  CTranslate2/LLVM y no contiene el runtime binario oficial de CTranslate2;
+- confirma que el instalador CPU conserva los inventarios y licencias de
+  CTranslate2/Intel OpenMP y no contiene bibliotecas CUDA;
 - transcribe, cancela, reabre, reproduce, edita y exporta;
 - confirma que no existen proyectos previos tras instalar;
 - verifica la suma SHA-256 publicada;

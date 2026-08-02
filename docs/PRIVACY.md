@@ -30,10 +30,10 @@ del instalador. Sólo descargan el runtime después de que el usuario lo solicit
 expresamente desde la aplicación. Este cambio no altera ni sustituye
 retroactivamente los instaladores `v0.1.0` que siguen disponibles en GitHub.
 
-El motor CPU incluido se construye desde fuentes fijadas de CTranslate2,
-oneDNN y LLVM, sin CUDA, oneMKL ni Intel OpenMP. Un marcador local de
-procedencia conserva commits, opciones y hashes de los DLL; no contiene audio,
-texto, perfiles ni identificadores del usuario.
+El motor CPU incluido procede del entorno CTranslate2 fijado por `uv.lock` e
+incluye su runtime Intel OpenMP. Los inventarios locales conservan versiones,
+licencias y hashes de los avisos; no contienen audio, texto, perfiles ni
+identificadores del usuario. El instalador base no contiene CUDA.
 
 ## Ubicaciones en Windows
 

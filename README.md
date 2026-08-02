@@ -259,11 +259,11 @@ falte, instálalo primero desde la
 [página oficial de Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
 **No hay que instalar Python, Node.js, Rust ni escribir comandos.**
 
-El motor CPU incluido no reutiliza el binario oficial de CTranslate2: se
-construye desde fuentes fijadas con CUDA y oneMKL desactivados, usando oneDNN y
-LLVM OpenMP abiertos. El instalador conserva un marcador de procedencia y los
-SHA-256 de cada DLL; la publicación se bloquea si no coinciden o si el binario
-importa runtimes CUDA, oneMKL, Intel OpenMP o Visual C++ OpenMP.
+El motor CPU incluido usa CTranslate2 4.8.1 y sus dependencias fijadas por
+`uv.lock`. El instalador conserva el inventario y las licencias exactas del
+runtime Python, incluido Intel OpenMP, y la publicación verifica que no se
+empaqueten bibliotecas CUDA. La aceleración NVIDIA se prepara aparte y sólo
+después del consentimiento del usuario.
 
 > [!IMPORTANT]
 > La Release heredada `v0.1.0`, que continúa descargable, incluye cuBLAS y cuDNN
