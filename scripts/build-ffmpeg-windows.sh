@@ -77,7 +77,18 @@ package_for_file() {
 
 copyright_for_package() {
   local package_name="$1"
+  local package_doc_name="${package_name%%:*}"
+  local canonical_copyright="/usr/share/doc/$package_doc_name/copyright"
   local copyright_path
+
+  # Debian/Ubuntu may expose a package's documentation directory as a symlink
+  # to a shared package. In that case dpkg-query -L does not list the target
+  # copyright file even though the canonical package path is valid.
+  if [[ -f "$canonical_copyright" ]]; then
+    readlink -f "$canonical_copyright"
+    return
+  fi
+
   copyright_path="$(
     dpkg-query -L "$package_name" |
       grep -E '^/usr/share/doc/[^/]+/copyright$' |
