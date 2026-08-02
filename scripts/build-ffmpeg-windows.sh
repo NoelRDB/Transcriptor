@@ -172,7 +172,7 @@ CONFIGURE_ARGUMENTS=(
   "--disable-encoders"
   "--enable-encoder=pcm_s16le,aac,mpeg4"
   "--disable-muxers"
-  "--enable-muxer=s16le,wav,mp4,mov"
+  "--enable-muxer=pcm_s16le,wav,mp4,mov"
   "--enable-filter=trim,atrim,setpts,asetpts,concat,aresample,scale,format,aformat"
   "--extra-version=transcriptor"
   "--extra-ldflags=-Wl,--no-insert-timestamp"

@@ -568,7 +568,7 @@ if ($RequireRuntimeAssets) {
     "--enable-static",
     "--disable-shared",
     "--enable-encoder=pcm_s16le,aac,mpeg4",
-    "--enable-muxer=s16le,wav,mp4,mov",
+    "--enable-muxer=pcm_s16le,wav,mp4,mov",
     "--enable-filter=trim,atrim,setpts,asetpts,concat,aresample,scale,format,aformat"
   )) {
     if ($FfmpegVersion.IndexOf(

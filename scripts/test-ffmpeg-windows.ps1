@@ -46,7 +46,7 @@ foreach ($RequiredConfiguration in @(
   "--disable-nonfree",
   "--enable-version3",
   "--enable-encoder=pcm_s16le,aac,mpeg4",
-  "--enable-muxer=s16le,wav,mp4,mov"
+  "--enable-muxer=pcm_s16le,wav,mp4,mov"
 )) {
   if ($VersionOutput.IndexOf(
       $RequiredConfiguration,
