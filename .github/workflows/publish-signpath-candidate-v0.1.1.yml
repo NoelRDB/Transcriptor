@@ -685,7 +685,26 @@ jobs:
 
           $NotesPath = Join-Path $env:RUNNER_TEMP "v0.1.1-release-notes.md"
           $Notes = @"
-          ## Candidata de evaluación SignPath — SIN FIRMA AUTHENTICODE
+          # Transcriptor v0.1.1
+
+          ### Más rápido, estable y cómodo para trabajar en local
+
+          [**Descargar el instalador recomendado para Windows (.exe)**](https://github.com/NoelRDB/Transcriptor/releases/download/v0.1.1/Transcriptor_0.1.1_x64-setup.exe)
+
+          ### Lo más destacado
+
+          - ⚡ Proyectos recientes visibles desde la caché mientras arranca el motor.
+          - 🚀 Menos preparación repetida de CUDA y modelos entre transcripciones.
+          - 📂 Nuevo acceso **Mostrar en carpeta** para cada audio o vídeo reciente.
+          - 🎙️ Detección en paralelo de micrófonos y fuentes de grabación.
+          - 👥 CAM++ empaquetado y comprobado para la separación local de voces.
+          - 🗃️ Apertura mucho más rápida de proyectos con miles de segmentos.
+          - 🛡️ Procesamiento privado, instalador CPU auditable y CUDA opcional.
+
+          > [!WARNING]
+          > **Candidata de evaluación SignPath — SIN FIRMA AUTHENTICODE.** Windows
+          > puede mostrar “editor desconocido”. Comprueba `checksums-SHA256.txt`
+          > antes de ejecutar el instalador.
 
           Esta Release pública ``v0.1.1`` se distribuye **sin firma de editor** para que
           SignPath Foundation pueda evaluar el proyecto en la misma forma que se desea
@@ -693,7 +712,7 @@ jobs:
           Transcriptor. Tanto NSIS/MSI como ``Transcriptor.exe``, el sidecar y
           los DLL instalados permanecen sin firma Authenticode.
 
-          ### Qué incluye
+          ### Qué incluye la descarga
 
           - Aplicación completa para Windows 10/11 x64.
           - Motor local completo para CPU, Python, FFmpeg y FFprobe.
@@ -758,15 +777,19 @@ jobs:
             --verify-tag `
             --draft `
             --prerelease `
-            --title "Transcriptor v0.1.1 - candidata SignPath sin firma" `
+            --title "Transcriptor v0.1.1 · Más rápido y estable" `
             --notes-file $NotesPath
           if ($LASTEXITCODE -ne 0) {
             throw "No se pudo crear la Release en borrador. La etiqueta fija puede requerir revisión manual."
           }
 
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
-          if ($LASTEXITCODE -ne 0) {
+            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --jq '.[] | select(.tag_name == "v0.1.1")'
+          if (
+            $LASTEXITCODE -ne 0 -or
+            [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
+          ) {
             throw "No se pudo recuperar el borrador recién creado."
           }
           $Release = $ReleaseRaw | ConvertFrom-Json
@@ -793,10 +816,17 @@ jobs:
           if ($env:RELEASE_TAG -cne "v0.1.1") {
             throw "La subida sólo admite el borrador fijo v0.1.1."
           }
-          $Release = (
-            gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
-          ) | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or -not $Release.draft) {
+          $ReleaseRaw = gh api `
+            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --jq '.[] | select(.tag_name == "v0.1.1")'
+          if (
+            $LASTEXITCODE -ne 0 -or
+            [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
+          ) {
+            throw "No se pudo recuperar el borrador antes de subir los assets."
+          }
+          $Release = $ReleaseRaw | ConvertFrom-Json
+          if (-not $Release.draft) {
             throw "La subida sólo está permitida mientras la Release sea borrador."
           }
           if (@($Release.assets).Count -ne 0) {
@@ -830,8 +860,12 @@ jobs:
             throw "La validación sólo admite el borrador fijo v0.1.1."
           }
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
-          if ($LASTEXITCODE -ne 0) {
+            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --jq '.[] | select(.tag_name == "v0.1.1")'
+          if (
+            $LASTEXITCODE -ne 0 -or
+            [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
+          ) {
             throw "No se pudo recuperar el borrador para cotejar sus assets."
           }
           $Release = $ReleaseRaw | ConvertFrom-Json
@@ -840,7 +874,7 @@ jobs:
           }
           if (
             [string]$Release.name -cne
-              "Transcriptor v0.1.1 - candidata SignPath sin firma"
+              "Transcriptor v0.1.1 · Más rápido y estable"
           ) {
             throw "El título del borrador no coincide con la candidata autorizada."
           }
@@ -1000,8 +1034,12 @@ jobs:
           }
 
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1"
-          if ($LASTEXITCODE -ne 0) {
+            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --jq '.[] | select(.tag_name == "v0.1.1")'
+          if (
+            $LASTEXITCODE -ne 0 -or
+            [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
+          ) {
             throw "No se pudo recuperar la Release en la puerta final."
           }
           $Release = $ReleaseRaw | ConvertFrom-Json
@@ -1011,7 +1049,7 @@ jobs:
             -not $Release.prerelease -or
             $Release.tag_name -cne "v0.1.1" -or
             [string]$Release.name -cne
-              "Transcriptor v0.1.1 - candidata SignPath sin firma"
+              "Transcriptor v0.1.1 · Más rápido y estable"
           ) {
             throw "El borrador cambió de identidad o estado."
           }
@@ -1145,9 +1183,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases/tags/v0.1.1" 2>$null
+            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --jq '.[] | select(.tag_name == "v0.1.1")' 2>$null
           $ReleaseExitCode = $LASTEXITCODE
-          if ($ReleaseExitCode -ne 0) {
+          if (
+            $ReleaseExitCode -ne 0 -or
+            [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
+          ) {
             $TagRaw = gh api `
               "repos/$env:GITHUB_REPOSITORY/git/ref/tags/v0.1.1" 2>$null
             if ($LASTEXITCODE -eq 0) {
