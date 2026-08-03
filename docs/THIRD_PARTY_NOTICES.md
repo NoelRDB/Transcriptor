@@ -58,9 +58,11 @@ El código propio de Transcriptor se distribuye bajo MIT. Las dependencias conse
   `copyright` exacto del paquete que aportó el CRT enlazado.
 - SQLite: dominio público.
 - PyInstaller: GPL-2.0-or-later con excepción para distribuir aplicaciones generadas.
-- Click 8.4.2: BSD-3-Clause. PyInstaller conserva además una copia exacta de
-  su licencia dentro de los metadatos del runtime del motor; la publicación
-  comprueba que coincide byte a byte con el ejemplar del inventario legal.
+- Click 8.4.2: BSD-3-Clause.
+- PyInstaller conserva además copias de algunos avisos dentro de los metadatos
+  de Click, kaldi-native-fbank, NumPy, python-docx, ReportLab y tqdm. La
+  publicación sólo las admite si su distribución y versión figuran en el
+  inventario cerrado y su SHA-256 coincide con el ejemplar legal centralizado.
 - Runtime Python: el inventario exacto se conserva en
   [`PYTHON-RUNTIME-INVENTORY.json`](licenses/PYTHON-RUNTIME-INVENTORY.json).
   El build copia los avisos desde cada distribución permitida sin aplanar

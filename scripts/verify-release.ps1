@@ -1184,32 +1184,103 @@ function Assert-PayloadLicensesMatch {
     $ExpectedFiles.Add($RootLicense.Key, $RootLicense.Source)
   }
 
-  # PyInstaller conserva el aviso BSD de Click dentro de los metadatos del
-  # runtime. El mismo archivo ya figura en el inventario legal centralizado;
-  # lo declaramos también en su ruta empaquetada y exigimos igualdad byte a
-  # byte para que una actualización de Click no pueda pasar inadvertida.
-  $RuntimeInventoryPath = Join-Path $RuntimeLicenseDirectory `
-    "PYTHON-RUNTIME-INVENTORY.json"
-  $RuntimeInventory = Get-Content -LiteralPath $RuntimeInventoryPath `
+  # PyInstaller puede conservar avisos de varias distribuciones dentro de sus
+  # metadatos. Sólo aceptamos los que ya figuran en el manifiesto cerrado y
+  # exigimos que la copia del runtime y la copia legal centralizada coincidan
+  # con el SHA-256 registrado. La clave conserva distribución, versión y ruta
+  # para que dos LICENSE con el mismo nombre nunca colisionen.
+  $RuntimeManifestPath = Join-Path $RuntimeLicenseDirectory `
+    "PYTHON-RUNTIME-LICENSES.json"
+  $RuntimeManifest = Get-Content -LiteralPath $RuntimeManifestPath `
     -Raw -Encoding UTF8 | ConvertFrom-Json
-  $ClickInventoryEntries = @(
-    $RuntimeInventory.distributions |
-      Where-Object { "$($_.name)" -ieq "click" }
+  $RuntimeSidecarDirectory = Join-Path (
+    $ProjectRoot
+  ) "src-tauri\binaries\transcriptor-engine-runtime"
+  if (-not (Test-Path -LiteralPath $RuntimeSidecarDirectory -PathType Container)) {
+    throw "Falta el runtime del motor cuyos metadatos legales deben auditarse."
+  }
+  $ResolvedRuntimeSidecarDirectory = (
+    Resolve-Path -LiteralPath $RuntimeSidecarDirectory
+  ).Path.TrimEnd(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
   )
-  if ($ClickInventoryEntries.Count -ne 1) {
-    throw "El inventario legal debe declarar exactamente una versión de Click."
+  $RuntimeSidecarPrefix =
+    $ResolvedRuntimeSidecarDirectory + [System.IO.Path]::DirectorySeparatorChar
+
+  foreach ($RuntimeDistribution in @($RuntimeManifest.distributions)) {
+    foreach ($LicenseRecord in @($RuntimeDistribution.files)) {
+      $WheelLicenseMatch = [regex]::Match(
+        "$($LicenseRecord.source)",
+        "(?i)^wheel:(?<path>.+\.dist-info/licenses/.+)$"
+      )
+      if (-not $WheelLicenseMatch.Success) {
+        continue
+      }
+      $RelativeMetadataPath = $WheelLicenseMatch.Groups["path"].Value
+      $UnsafeMetadataSegments = @(
+        $RelativeMetadataPath -split "/" |
+          Where-Object { $_ -in @("", ".", "..") }
+      )
+      if (
+        [System.IO.Path]::IsPathRooted($RelativeMetadataPath) -or
+        $UnsafeMetadataSegments.Count -ne 0
+      ) {
+        throw "El manifiesto contiene una ruta legal de wheel no segura."
+      }
+      $SidecarLicensePath = [System.IO.Path]::GetFullPath(
+        $(Join-Path $ResolvedRuntimeSidecarDirectory (
+          $RelativeMetadataPath.Replace(
+            "/",
+            [System.IO.Path]::DirectorySeparatorChar
+          )
+        ))
+      )
+      if (-not $SidecarLicensePath.StartsWith(
+        $RuntimeSidecarPrefix,
+        [System.StringComparison]::OrdinalIgnoreCase
+      )) {
+        throw "Un aviso de wheel queda fuera del runtime permitido."
+      }
+      if (-not (Test-Path -LiteralPath $SidecarLicensePath -PathType Leaf)) {
+        continue
+      }
+
+      $CentralLicensePath = [System.IO.Path]::GetFullPath(
+        $(Join-Path $ResolvedRuntimeLicenseDirectory "$($LicenseRecord.path)")
+      )
+      if (-not $CentralLicensePath.StartsWith(
+        $RuntimeLicensePrefix,
+        [System.StringComparison]::OrdinalIgnoreCase
+      )) {
+        throw "Un aviso del manifiesto queda fuera de la raíz legal auditada."
+      }
+      if (-not (Test-Path -LiteralPath $CentralLicensePath -PathType Leaf)) {
+        throw "Falta un aviso centralizado declarado en el manifiesto runtime."
+      }
+      $ExpectedRecordHash = "$($LicenseRecord.sha256)".ToLowerInvariant()
+      if ($ExpectedRecordHash -notmatch "^[a-f0-9]{64}$") {
+        throw "El manifiesto runtime contiene un SHA-256 legal no válido."
+      }
+      $SidecarLicenseHash = (
+        Get-FileHash -LiteralPath $SidecarLicensePath -Algorithm SHA256
+      ).Hash.ToLowerInvariant()
+      $CentralLicenseHash = (
+        Get-FileHash -LiteralPath $CentralLicensePath -Algorithm SHA256
+      ).Hash.ToLowerInvariant()
+      if (
+        $SidecarLicenseHash -cne $ExpectedRecordHash -or
+        $CentralLicenseHash -cne $ExpectedRecordHash
+      ) {
+        throw "Una licencia conservada por PyInstaller difiere del manifiesto."
+      }
+      $PayloadKey = "transcriptor-engine-runtime/$RelativeMetadataPath"
+      if ($ExpectedFiles.ContainsKey($PayloadKey)) {
+        throw "El manifiesto declara dos veces la licencia $PayloadKey."
+      }
+      $ExpectedFiles.Add($PayloadKey, $CentralLicensePath)
+    }
   }
-  $ClickVersion = "$($ClickInventoryEntries[0].version)"
-  if ($ClickVersion -notmatch "^[0-9]+(?:\.[0-9]+){1,3}$") {
-    throw "El inventario legal contiene una versión de Click no válida."
-  }
-  $BundledClickLicense = Join-Path $RuntimeLicenseDirectory (
-    "python\click-$ClickVersion\wheel\licenses\LICENSE.txt"
-  )
-  if (-not (Test-Path -LiteralPath $BundledClickLicense -PathType Leaf)) {
-    throw "Falta la licencia auditada de Click $ClickVersion."
-  }
-  $ExpectedFiles.Add("licenses/LICENSE.txt", $BundledClickLicense)
 
   $ResolvedPayloadDirectory = (
     Resolve-Path -LiteralPath $PayloadDirectory
@@ -1239,8 +1310,14 @@ function Assert-PayloadLicensesMatch {
     ).Replace("\", "/")
     $LicenseMatch = [regex]::Match(
       $RelativePayloadPath,
-      "(?i)(?:^|/)(?<key>licenses/.+)$"
+      "(?i)(?:^|/)(?<key>transcriptor-engine-runtime/.+\.dist-info/licenses/.+)$"
     )
+    if (-not $LicenseMatch.Success) {
+      $LicenseMatch = [regex]::Match(
+      $RelativePayloadPath,
+      "(?i)(?:^|/)(?<key>licenses/.+)$"
+      )
+    }
     if (-not $LicenseMatch.Success) {
       continue
     }
