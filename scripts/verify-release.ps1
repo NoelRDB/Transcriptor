@@ -1184,6 +1184,33 @@ function Assert-PayloadLicensesMatch {
     $ExpectedFiles.Add($RootLicense.Key, $RootLicense.Source)
   }
 
+  # PyInstaller conserva el aviso BSD de Click dentro de los metadatos del
+  # runtime. El mismo archivo ya figura en el inventario legal centralizado;
+  # lo declaramos también en su ruta empaquetada y exigimos igualdad byte a
+  # byte para que una actualización de Click no pueda pasar inadvertida.
+  $RuntimeInventoryPath = Join-Path $RuntimeLicenseDirectory `
+    "PYTHON-RUNTIME-INVENTORY.json"
+  $RuntimeInventory = Get-Content -LiteralPath $RuntimeInventoryPath `
+    -Raw -Encoding UTF8 | ConvertFrom-Json
+  $ClickInventoryEntries = @(
+    $RuntimeInventory.distributions |
+      Where-Object { "$($_.name)" -ieq "click" }
+  )
+  if ($ClickInventoryEntries.Count -ne 1) {
+    throw "El inventario legal debe declarar exactamente una versión de Click."
+  }
+  $ClickVersion = "$($ClickInventoryEntries[0].version)"
+  if ($ClickVersion -notmatch "^[0-9]+(?:\.[0-9]+){1,3}$") {
+    throw "El inventario legal contiene una versión de Click no válida."
+  }
+  $BundledClickLicense = Join-Path $RuntimeLicenseDirectory (
+    "python\click-$ClickVersion\wheel\licenses\LICENSE.txt"
+  )
+  if (-not (Test-Path -LiteralPath $BundledClickLicense -PathType Leaf)) {
+    throw "Falta la licencia auditada de Click $ClickVersion."
+  }
+  $ExpectedFiles.Add("licenses/LICENSE.txt", $BundledClickLicense)
+
   $ResolvedPayloadDirectory = (
     Resolve-Path -LiteralPath $PayloadDirectory
   ).Path.TrimEnd(
