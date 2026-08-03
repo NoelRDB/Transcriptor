@@ -2,11 +2,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "../types";
+import { engine } from "../lib/engine";
 import { SettingsDialog } from "./SettingsDialog";
 
 vi.mock("../lib/engine", () => ({
   engine: {
     available: true,
+    getCachedHardwareInfo: vi.fn().mockReturnValue(null),
+    getCachedSpeakerAiStatus: vi.fn().mockReturnValue(null),
     getHardwareInfo: vi.fn().mockResolvedValue({
       cpu: { name: "AMD Ryzen de prueba", physicalCores: 8, logicalCores: 16, usagePercent: 20 },
       memory: { totalMiB: 32768, availableMiB: 20480, usagePercent: 37.5 },
@@ -95,5 +98,30 @@ describe("centro de rendimiento", () => {
     expect(screen.queryByText("Latencia en directo")).toBeNull();
     expect(screen.queryByText("Nombre de la primera voz")).toBeNull();
     expect(screen.queryByText("Nombre de la segunda voz")).toBeNull();
+  });
+
+  it("no ofrece instalar CAM++ mientras todavía está comprobando el modelo local", async () => {
+    let finishCheck!: (value: Awaited<ReturnType<typeof engine.getSpeakerAiStatus>>) => void;
+    vi.mocked(engine.getSpeakerAiStatus).mockImplementationOnce(() => new Promise((resolve) => {
+      finishCheck = resolve;
+    }));
+
+    render(<SettingsDialog settings={DEFAULT_SETTINGS} onChange={() => undefined} onClose={() => undefined} />);
+
+    expect(screen.getByText("Comprobando la IA de voces")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Instalar IA" })).toBeNull();
+    finishCheck({
+      installed: true,
+      ready: true,
+      backend: "CAM++ · ONNX",
+      model: "CAM++",
+      path: "C:\\models\\speaker.onnx",
+      sizeBytes: 28_281_164,
+      expectedBytes: 28_281_164,
+      privacy: "local",
+      preciseAvailable: false,
+      notice: "Lista",
+    });
+    await waitFor(() => expect(screen.getByText("Separación neuronal activada")).toBeTruthy());
   });
 });

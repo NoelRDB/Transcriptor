@@ -54,7 +54,6 @@ export function routeEngineEvent(event: EngineEvent): void {
         const current = useAppStore.getState().project;
         if (current?.id === payload.projectId) useAppStore.getState().setProject({ ...saved, mediaUrl });
       }).catch((error) => useAppStore.getState().setError(`La transcripción terminó, pero no se pudo verificar el guardado: ${error.message}`));
-      void engine.listProjects().then(useAppStore.getState().setRecentProjects).catch(() => undefined);
     }
   }
   if (event.type === "job_cancelled") {

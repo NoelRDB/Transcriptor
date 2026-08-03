@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LiveRecorderDialog } from "./LiveRecorderDialog";
 
-const { startSession, pushAudio, stopSession, cancelSession, captureStart, capturePause, captureResume, captureStop } = vi.hoisted(() => ({
+const { startEngine, startSession, pushAudio, stopSession, cancelSession, captureStart, capturePause, captureResume, captureStop } = vi.hoisted(() => ({
+  startEngine: vi.fn().mockResolvedValue(undefined),
   startSession: vi.fn().mockResolvedValue({ sessionId: "recording-1", sampleRate: 16000, createdAt: "2026-08-02T12:00:00Z" }),
   pushAudio: vi.fn().mockResolvedValue({ sessionId: "recording-1", durationMs: 1000, duplicate: false }),
   stopSession: vi.fn().mockResolvedValue({ sessionId: "recording-1", mediaPath: "C:\\recordings\\Grabación.wav", durationMs: 1000, language: "es", createdAt: "2026-08-02T12:00:00Z" }),
@@ -16,6 +17,7 @@ const { startSession, pushAudio, stopSession, cancelSession, captureStart, captu
 
 vi.mock("../lib/engine", () => ({
   engine: {
+    start: startEngine,
     startRecordingSession: startSession,
     pushRecordingAudio: pushAudio,
     stopRecordingSession: stopSession,
@@ -67,5 +69,21 @@ describe("grabadora local", () => {
 
     await waitFor(() => expect(stopSession).toHaveBeenCalledWith("recording-1"));
     await waitFor(() => expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ mediaPath: expect.stringContaining("Grabación.wav") })));
+  });
+
+  it("solicita el audio mientras el motor termina de arrancar", async () => {
+    let finishEngineStart!: () => void;
+    startEngine.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishEngineStart = resolve;
+    }));
+    render(<LiveRecorderDialog audioSource="microphone" language="es" onAudioSourceChange={() => undefined} onLanguageChange={() => undefined} onComplete={() => undefined} onClose={() => undefined} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Empezar a grabar/ }));
+
+    await waitFor(() => expect(startEngine).toHaveBeenCalled());
+    expect(captureStart).toHaveBeenCalledWith("microphone");
+    expect(startSession).not.toHaveBeenCalled();
+    finishEngineStart();
+    await waitFor(() => expect(startSession).toHaveBeenCalledWith("es"));
   });
 });

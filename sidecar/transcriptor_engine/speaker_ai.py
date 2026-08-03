@@ -12,45 +12,20 @@ import kaldi_native_fbank as knf
 import numpy as np
 import onnxruntime as ort
 
-from .paths import models_dir
+from .speaker_model import (
+    MODEL_BYTES,
+    MODEL_SHA256,
+    MODEL_URL,
+    speaker_ai_status,
+    speaker_model_path,
+)
 
 SAMPLE_RATE = 16_000
 SINGLE_PROFILE_ABSOLUTE_FLOOR = 0.72
 MULTI_PROFILE_ABSOLUTE_FLOOR = 0.70
-MODEL_NAME = "3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx"
-MODEL_URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/{MODEL_NAME}"
-MODEL_SHA256 = "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2"
-MODEL_BYTES = 28_281_164
-
 ProgressCallback = Callable[[dict[str, Any]], None]
 _embedder: NeuralSpeakerEmbedder | None = None
 _embedder_lock = threading.Lock()
-
-
-def speaker_model_path() -> Path:
-    return models_dir() / "speaker" / MODEL_NAME
-
-
-def speaker_ai_status() -> dict[str, Any]:
-    path = speaker_model_path()
-    installed = path.is_file() and path.stat().st_size == MODEL_BYTES
-    return {
-        "installed": installed,
-        "ready": installed,
-        "backend": "CAM++ · ONNX" if installed else "Acústico ligero",
-        "model": "CAM++ multilingüe · 192 dimensiones",
-        "path": str(path),
-        "sizeBytes": MODEL_BYTES,
-        "expectedBytes": MODEL_BYTES,
-        "privacy": "local",
-        "preciseAvailable": _pyannote_available(),
-        "preciseModel": "pyannote Community-1",
-        "notice": (
-            "La IA neuronal de voces está lista."
-            if installed
-            else "Instala el modelo de voces para sustituir la comparación espectral básica."
-        ),
-    }
 
 
 def download_speaker_model(progress: ProgressCallback, cancelled: Callable[[], bool]) -> dict[str, Any]:
@@ -1040,11 +1015,3 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _pyannote_available() -> bool:
-    try:
-        import pyannote.audio  # noqa: F401
-    except (ImportError, OSError):
-        return False
-    return True

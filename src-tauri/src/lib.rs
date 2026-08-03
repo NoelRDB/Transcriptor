@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 use tauri::Manager;
 
 const MEDIA_EXTENSIONS: &[&str] = &[
@@ -27,6 +27,30 @@ fn allow_media_file(app: tauri::AppHandle, path: String) -> Result<String, Strin
     Ok(path)
 }
 
+#[tauri::command]
+fn reveal_media_file(path: String) -> Result<(), String> {
+    let canonical = PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|_| "El archivo multimedia ya no existe o no es accesible.".to_string())?;
+    if !canonical.is_file() {
+        return Err("La ruta no corresponde a un archivo multimedia.".to_string());
+    }
+    let extension = canonical
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| "El archivo no tiene una extensión compatible.".to_string())?;
+    if !MEDIA_EXTENSIONS.contains(&extension.as_str()) {
+        return Err("El formato multimedia no está admitido.".to_string());
+    }
+    Command::new("explorer.exe")
+        .arg("/select,")
+        .arg(&canonical)
+        .spawn()
+        .map_err(|error| format!("No se pudo abrir la carpeta del archivo: {error}"))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -38,7 +62,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![allow_media_file])
+        .invoke_handler(tauri::generate_handler![
+            allow_media_file,
+            reveal_media_file
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Transcriptor");
 }

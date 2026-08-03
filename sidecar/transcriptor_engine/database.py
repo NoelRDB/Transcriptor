@@ -407,11 +407,19 @@ class ProjectDatabase:
             segment_rows = db.execute(
                 "SELECT * FROM segments WHERE project_id = ? ORDER BY segment_order, start_ms", (project_id,)
             ).fetchall()
+            word_rows = db.execute(
+                """SELECT words.* FROM words
+                   JOIN segments ON segments.id = words.segment_id
+                   WHERE segments.project_id = ?
+                   ORDER BY segments.segment_order, words.start_ms""",
+                (project_id,),
+            ).fetchall()
+            words_by_segment: dict[str, list[sqlite3.Row]] = {}
+            for word in word_rows:
+                words_by_segment.setdefault(str(word["segment_id"]), []).append(word)
             segments = []
             for segment in segment_rows:
-                words = db.execute(
-                    "SELECT * FROM words WHERE segment_id = ? ORDER BY start_ms", (segment["id"],)
-                ).fetchall()
+                words = words_by_segment.get(str(segment["id"]), [])
                 segments.append(
                     {
                         "id": segment["id"],

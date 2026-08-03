@@ -16,6 +16,7 @@ from transcriptor_engine.cuda_runtime import (
     RuntimePackage,
     get_cuda_runtime_status,
     install_cuda_runtime,
+    managed_cuda_runtime_present,
     preload_cuda_backend,
 )
 
@@ -470,6 +471,25 @@ def test_missing_static_dependency_notice_fails_closed(
     assert "oneDNN-Third-Party-Programs.txt" in status["missingFiles"]
 
 
+def test_fast_runtime_hint_rejects_a_missing_library(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = _configure_test_runtime(tmp_path, monkeypatch)
+    packages, documents, downloads = _packages()
+    install_cuda_runtime(
+        lambda _event: None,
+        lambda: False,
+        packages=packages,
+        legal_documents=documents,
+        opener=lambda url: io.BytesIO(downloads[url]),
+    )
+
+    assert managed_cuda_runtime_present() is True
+    (target / "cublas64_12.dll").unlink()
+    assert managed_cuda_runtime_present() is False
+
+
 def test_cancelled_download_never_replaces_the_previous_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -631,6 +651,7 @@ def test_preload_uses_verified_absolute_paths_without_mutating_path(
     monkeypatch.setattr(cuda_runtime, "_PRELOADED_LIBRARY_HANDLES", [])
     monkeypatch.setattr(cuda_runtime, "_PRELOADED_DIRECTORY_HANDLES", [])
     monkeypatch.setattr(cuda_runtime, "_GPU_BACKEND_PRELOADED", False)
+    monkeypatch.setattr(cuda_runtime, "_GPU_BACKEND_ACTIVATION", None)
 
     status = preload_cuda_backend()
 
@@ -641,6 +662,16 @@ def test_preload_uses_verified_absolute_paths_without_mutating_path(
     )
     assert all(path.is_absolute() and parent == target for path, parent in loaded)
     assert cuda_runtime.os.environ.get("PATH") == old_path
+
+    monkeypatch.setattr(
+        cuda_runtime,
+        "get_cuda_runtime_status",
+        lambda: pytest.fail("No debe recalcular hashes después de activar CUDA"),
+    )
+
+    repeated = preload_cuda_backend()
+
+    assert repeated == status
 
 
 def test_loaded_cpu_backend_requires_restart_instead_of_fake_activation(
@@ -658,6 +689,7 @@ def test_loaded_cpu_backend_requires_restart_instead_of_fake_activation(
     )
     monkeypatch.setattr(cuda_runtime, "_ctranslate2_already_loaded", lambda: True)
     monkeypatch.setattr(cuda_runtime, "_GPU_BACKEND_PRELOADED", False)
+    monkeypatch.setattr(cuda_runtime, "_GPU_BACKEND_ACTIVATION", None)
     monkeypatch.setattr(
         cuda_runtime,
         "_load_library_absolute",

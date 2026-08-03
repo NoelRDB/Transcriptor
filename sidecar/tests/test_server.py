@@ -179,6 +179,34 @@ def test_listing_projects_does_not_load_whisper_or_live_transcription():
     assert server._live is None
 
 
+def test_speaker_status_uses_the_lightweight_model_module():
+    assert server_module.speaker_ai_status.__module__.endswith("speaker_model")
+    assert not hasattr(server_module, "neural_assign_speakers")
+
+
+def test_hardware_inventory_is_cached_until_refresh(monkeypatch):
+    calls = []
+    monkeypatch.setattr(server_module, "managed_cuda_runtime_present", lambda: True)
+    monkeypatch.setattr(
+        server_module,
+        "get_hardware_info",
+        lambda cuda_available: calls.append(cuda_available) or {"cudaAvailable": cuda_available},
+    )
+    server = EngineServer(database=StubDatabase(), writer=StubWriter())
+
+    server.handle({"requestId": "hardware-1", "action": "get_hardware_info", "payload": {}})
+    server.handle({"requestId": "hardware-2", "action": "get_hardware_info", "payload": {}})
+    server.handle(
+        {
+            "requestId": "hardware-refresh",
+            "action": "get_hardware_info",
+            "payload": {"refresh": True},
+        }
+    )
+
+    assert calls == [True, True]
+
+
 def test_cuda_runtime_manager_streams_progress_and_reports_activation(monkeypatch):
     writer = CaptureWriter()
     server = EngineServer(database=StubDatabase(), writer=writer)

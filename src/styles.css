@@ -146,12 +146,13 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 .recent-title > span strong { color: var(--text); font-size: 12px; font-weight: 680; }
 .recent-title > span small { margin-top: 3px; font-size: 8px; }
 .recent-list { min-height: 0; padding: 8px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
-.recent-project { width: 100%; min-height: 66px; padding: 4px 5px; display: grid; grid-template-columns: minmax(0, 1fr) 32px; gap: 3px; align-items: center; border: 1px solid transparent; border-radius: 12px; color: var(--text); background: transparent; transition: background .15s ease, border-color .15s ease; }
+.recent-project { width: 100%; min-height: 66px; padding: 4px 5px; display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; gap: 3px; align-items: center; border: 1px solid transparent; border-radius: 12px; color: var(--text); background: transparent; transition: background .15s ease, border-color .15s ease; }
 .recent-project + .recent-project { margin-top: 2px; }
 .recent-project:hover, .recent-project:focus-within { border-color: var(--line-soft); background: var(--panel-raised); }
 .recent-open { min-width: 0; min-height: 56px; padding: 5px 4px; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 11px; align-items: center; border: 0; border-radius: 9px; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
-.recent-delete { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; color: color-mix(in srgb, var(--muted) 52%, transparent); background: transparent; cursor: pointer; opacity: .35; transition: opacity .15s ease, color .15s ease, background .15s ease; }
-.recent-project:hover .recent-delete, .recent-delete:focus-visible { opacity: 1; }
+.recent-reveal, .recent-delete { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; color: color-mix(in srgb, var(--muted) 52%, transparent); background: transparent; cursor: pointer; opacity: .35; transition: opacity .15s ease, color .15s ease, background .15s ease; }
+.recent-project:hover .recent-reveal, .recent-project:hover .recent-delete, .recent-reveal:focus-visible, .recent-delete:focus-visible { opacity: 1; }
+.recent-reveal:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .recent-delete:hover { color: #ff8c87; background: color-mix(in srgb, var(--danger) 9%, transparent); }
 .recent-project-copy { min-width: 0; }
 .recent-project-copy strong, .recent-project-copy small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

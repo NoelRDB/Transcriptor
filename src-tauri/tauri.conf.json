@@ -37,6 +37,7 @@
     "publisher": "NoelRDB",
     "externalBin": ["binaries/transcriptor-engine"],
     "resources": {
+      "binaries/transcriptor-engine-runtime/": "transcriptor-engine-runtime/",
       "resources/licenses/": "licenses/runtime/",
       "../LICENSE": "licenses/Transcriptor-MIT.txt",
       "../docs/THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md"

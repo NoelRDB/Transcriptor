@@ -92,6 +92,7 @@ _PRELOAD_LOCK = threading.Lock()
 _PRELOADED_LIBRARY_HANDLES: list[Any] = []
 _PRELOADED_DIRECTORY_HANDLES: list[Any] = []
 _GPU_BACKEND_PRELOADED = False
+_GPU_BACKEND_ACTIVATION: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -360,6 +361,37 @@ def cuda_library_directories() -> list[Path]:
     return list(directories)
 
 
+def managed_cuda_runtime_present() -> bool:
+    """Return a fast UI hint; activation still performs full SHA-256 verification."""
+    target = managed_cuda_dir()
+    try:
+        manifest = json.loads((target / _MANIFEST_NAME).read_text(encoding="utf-8"))
+        if manifest.get("schemaVersion") != _MANIFEST_SCHEMA_VERSION:
+            return False
+        records = manifest.get("files")
+        if not isinstance(records, list):
+            return False
+        expected_names = set(CUDA_RUNTIME_FILES) | set(CUDA_LICENSE_FILES)
+        by_name = {
+            str(record.get("name")): record
+            for record in records
+            if isinstance(record, dict) and isinstance(record.get("name"), str)
+        }
+        if set(by_name) != expected_names or len(by_name) != len(records):
+            return False
+        if manifest.get("inventorySha256") != _inventory_digest(
+            sorted(records, key=lambda record: str(record.get("name", "")))
+        ):
+            return False
+        for name, record in by_name.items():
+            path = target / name
+            if not path.is_file() or path.stat().st_size != record.get("sizeBytes"):
+                return False
+        return all(_valid_runtime_file(target / name) for name in CUDA_RUNTIME_FILES)
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+
 def get_cuda_runtime_status() -> dict[str, Any]:
     target = managed_cuda_dir()
     package_bytes = sum(package.size for package in CUDA_PACKAGES) + sum(
@@ -376,7 +408,6 @@ def get_cuda_runtime_status() -> dict[str, Any]:
     ready = (
         source == "managed"
         and all(filename in found for filename in CUDA_RUNTIME_FILES)
-        and _managed_runtime_integrity(target)
     )
     installed = _directory_nonempty(target)
     restart_required = bool(
@@ -877,23 +908,20 @@ def preload_cuda_backend() -> dict[str, Any]:
     CTranslate2 module/DLL is already present in the process, Windows cannot
     safely replace that module, so the result explicitly requires a restart.
     """
-    global _GPU_BACKEND_PRELOADED
+    global _GPU_BACKEND_ACTIVATION, _GPU_BACKEND_PRELOADED
 
-    status = get_cuda_runtime_status()
-    if not status["ready"]:
-        return {
-            **status,
-            "activated": False,
-            "usable": False,
-        }
     with _PRELOAD_LOCK:
-        if _GPU_BACKEND_PRELOADED:
+        if _GPU_BACKEND_PRELOADED and _GPU_BACKEND_ACTIVATION is not None:
+            # The verified DLLs are already mapped into this process. Rehashing
+            # the almost 2 GiB runtime for every queued transcription only
+            # rereads files that Windows is already executing.
+            return dict(_GPU_BACKEND_ACTIVATION)
+        status = get_cuda_runtime_status()
+        if not status["ready"]:
             return {
-                **get_cuda_runtime_status(),
-                "activated": True,
-                "usable": True,
-                "restartRequired": False,
-                "activationState": "active",
+                **status,
+                "activated": False,
+                "usable": False,
             }
         if _ctranslate2_already_loaded():
             return {
@@ -903,7 +931,12 @@ def preload_cuda_backend() -> dict[str, Any]:
                 "restartRequired": True,
                 "activationState": "restart-required",
             }
-        directory = _verified_managed_runtime_directory()
+        # get_cuda_runtime_status() performed the complete SHA-256 verification
+        # while holding the preload lock. Resolve and load that exact directory
+        # without repeating the same multi-gigabyte scan.
+        directory = _verified_managed_runtime_directory(
+            integrity_already_verified=True
+        )
         directory_handle: Any | None = None
         loaded_handles: list[Any] = []
         try:
@@ -925,13 +958,14 @@ def preload_cuda_backend() -> dict[str, Any]:
             _PRELOADED_DIRECTORY_HANDLES.append(directory_handle)
         _PRELOADED_LIBRARY_HANDLES.extend(loaded_handles)
         _GPU_BACKEND_PRELOADED = True
-        return {
-            **get_cuda_runtime_status(),
+        _GPU_BACKEND_ACTIVATION = {
+            **status,
             "activated": True,
             "usable": True,
             "restartRequired": False,
             "activationState": "active",
         }
+        return dict(_GPU_BACKEND_ACTIVATION)
 
 
 def _load_library_absolute(path: Path, expected_parent: Path) -> Any:
@@ -1320,10 +1354,12 @@ def _prepare_private_runtime_parent(target: Path) -> None:
         ) from error
 
 
-def _verified_managed_runtime_directory() -> Path:
+def _verified_managed_runtime_directory(
+    *, integrity_already_verified: bool = False
+) -> Path:
     target = managed_cuda_dir()
     _prepare_private_runtime_parent(target)
-    if not _managed_runtime_integrity(target):
+    if not integrity_already_verified and not _managed_runtime_integrity(target):
         raise CudaRuntimeError(
             "El backend GPU está incompleto o alguno de sus hashes ha cambiado."
         )

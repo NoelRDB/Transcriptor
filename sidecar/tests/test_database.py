@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 
 from transcriptor_engine.database import ProjectDatabase
@@ -40,6 +42,49 @@ def test_project_roundtrip_and_recent_list(tmp_path):
     assert loaded["name"] == "Reunión"
     assert loaded["segments"][0]["words"][0]["text"] == "Hola"
     assert database.list_projects()[0]["mediaPath"].endswith("reunión.mp4")
+
+
+def test_loading_many_segments_fetches_words_with_one_query(tmp_path, monkeypatch):
+    database = ProjectDatabase(tmp_path / "many-segments.sqlite3")
+    value = project()
+    value["segments"] = [
+        {
+            **value["segments"][0],
+            "id": f"s{index}",
+            "order": index,
+            "startMs": index * 1_000,
+            "endMs": (index + 1) * 1_000,
+            "words": [
+                {
+                    **value["segments"][0]["words"][0],
+                    "id": f"w{index}",
+                    "startMs": index * 1_000,
+                    "endMs": index * 1_000 + 500,
+                    "text": f"Palabra {index}",
+                }
+            ],
+        }
+        for index in range(8)
+    ]
+    database.save_project(value)
+    original_connect = database.connect
+    statements: list[str] = []
+
+    @contextmanager
+    def traced_connect():
+        with original_connect() as connection:
+            connection.set_trace_callback(statements.append)
+            yield connection
+
+    monkeypatch.setattr(database, "connect", traced_connect)
+
+    loaded = database.load_project(value["id"])
+
+    word_queries = [statement for statement in statements if "FROM WORDS" in statement.upper()]
+    assert len(word_queries) == 1
+    assert [segment["words"][0]["text"] for segment in loaded["segments"]] == [
+        f"Palabra {index}" for index in range(8)
+    ]
 
 
 def test_saving_replaces_segments_atomically(tmp_path):
