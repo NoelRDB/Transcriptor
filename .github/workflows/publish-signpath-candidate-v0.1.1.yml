@@ -773,24 +773,25 @@ jobs:
             [System.Text.UTF8Encoding]::new($false)
           )
 
-          gh release create "v0.1.1" `
-            --verify-tag `
-            --draft `
-            --prerelease `
-            --title "Transcriptor v0.1.1 · Más rápido y estable" `
-            --notes-file $NotesPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "No se pudo crear la Release en borrador. La etiqueta fija puede requerir revisión manual."
-          }
-
+          # La respuesta de creación ya contiene el ID inmutable del borrador.
+          # Usarlo directamente evita depender de la consistencia eventual del
+          # listado de Releases justo después de crearla.
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --jq '.[] | select(.tag_name == "v0.1.1")'
+            --method POST `
+            "repos/$env:GITHUB_REPOSITORY/releases" `
+            -f "tag_name=v0.1.1" `
+            -f "target_commitish=$env:SOURCE_SHA" `
+            -f "name=Transcriptor v0.1.1 · Más rápido y estable" `
+            -f "body=$Notes" `
+            -F "draft=true" `
+            -F "prerelease=true" `
+            -F "generate_release_notes=false" `
+            -f "make_latest=false"
           if (
             $LASTEXITCODE -ne 0 -or
             [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
           ) {
-            throw "No se pudo recuperar el borrador recién creado."
+            throw "No se pudo crear la Release en borrador. La etiqueta fija puede requerir revisión manual."
           }
           $Release = $ReleaseRaw | ConvertFrom-Json
           if (
@@ -811,14 +812,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_DIRECTORY: ${{ steps.assets.outputs.directory }}
+          EXPECTED_RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
           $ErrorActionPreference = "Stop"
           if ($env:RELEASE_TAG -cne "v0.1.1") {
             throw "La subida sólo admite el borrador fijo v0.1.1."
           }
+          if ($env:EXPECTED_RELEASE_ID -notmatch "^\d+$") {
+            throw "El identificador del borrador no es válido antes de subir."
+          }
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --jq '.[] | select(.tag_name == "v0.1.1")'
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:EXPECTED_RELEASE_ID"
           if (
             $LASTEXITCODE -ne 0 -or
             [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
@@ -826,11 +830,38 @@ jobs:
             throw "No se pudo recuperar el borrador antes de subir los assets."
           }
           $Release = $ReleaseRaw | ConvertFrom-Json
-          if (-not $Release.draft) {
+          if (
+            [string]$Release.id -cne $env:EXPECTED_RELEASE_ID -or
+            $Release.tag_name -cne "v0.1.1" -or
+            -not $Release.draft
+          ) {
             throw "La subida sólo está permitida mientras la Release sea borrador."
           }
           if (@($Release.assets).Count -ne 0) {
             throw "El borrador nuevo debe estar vacío; no se reemplazará ningún asset."
+          }
+
+          # `gh release upload` resuelve el borrador por etiqueta. Esperamos a
+          # que el índice por tag alcance al recurso que ya verificamos por ID.
+          $VisibleByTag = $false
+          for ($Attempt = 1; $Attempt -le 10; $Attempt++) {
+            $VisibleRaw = gh api `
+              "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+              --jq '.[] | select(.tag_name == "v0.1.1")' 2>$null
+            if (
+              $LASTEXITCODE -eq 0 -and
+              -not [string]::IsNullOrWhiteSpace([string]$VisibleRaw)
+            ) {
+              $VisibleRelease = $VisibleRaw | ConvertFrom-Json
+              if ([string]$VisibleRelease.id -ceq $env:EXPECTED_RELEASE_ID) {
+                $VisibleByTag = $true
+                break
+              }
+            }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $VisibleByTag) {
+            throw "GitHub no indexó el borrador por etiqueta a tiempo para subir assets."
           }
 
           $AssetPaths = @(
@@ -854,14 +885,17 @@ jobs:
           CANDIDATE_DIRECTORY: ${{ steps.assets.outputs.directory }}
           SOURCE_SHA: ${{ steps.preflight.outputs.source_sha }}
           SOURCE_NAME: ${{ steps.ffmpeg-assets.outputs.source_name }}
+          EXPECTED_RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
           $ErrorActionPreference = "Stop"
           if ($env:RELEASE_TAG -cne "v0.1.1") {
             throw "La validación sólo admite el borrador fijo v0.1.1."
           }
+          if ($env:EXPECTED_RELEASE_ID -notmatch "^\d+$") {
+            throw "El identificador del borrador no es válido al cotejar assets."
+          }
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --jq '.[] | select(.tag_name == "v0.1.1")'
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:EXPECTED_RELEASE_ID"
           if (
             $LASTEXITCODE -ne 0 -or
             [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
@@ -869,7 +903,12 @@ jobs:
             throw "No se pudo recuperar el borrador para cotejar sus assets."
           }
           $Release = $ReleaseRaw | ConvertFrom-Json
-          if (-not $Release.draft -or -not $Release.prerelease) {
+          if (
+            [string]$Release.id -cne $env:EXPECTED_RELEASE_ID -or
+            $Release.tag_name -cne "v0.1.1" -or
+            -not $Release.draft -or
+            -not $Release.prerelease
+          ) {
             throw "La Release dejó de ser un borrador privado durante la validación."
           }
           if (
@@ -1034,8 +1073,7 @@ jobs:
           }
 
           $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --jq '.[] | select(.tag_name == "v0.1.1")'
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:EXPECTED_RELEASE_ID"
           if (
             $LASTEXITCODE -ne 0 -or
             [string]::IsNullOrWhiteSpace([string]$ReleaseRaw)
@@ -1181,10 +1219,18 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_RELEASE_ID: ${{ steps.draft.outputs.release_id }}
         run: |
-          $ReleaseRaw = gh api `
-            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --jq '.[] | select(.tag_name == "v0.1.1")' 2>$null
+          $ReleaseRaw = if ($env:EXPECTED_RELEASE_ID -match "^\d+$") {
+            gh api `
+              "repos/$env:GITHUB_REPOSITORY/releases/$env:EXPECTED_RELEASE_ID" `
+              2>$null
+          }
+          else {
+            gh api `
+              "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+              --jq '.[] | select(.tag_name == "v0.1.1")' 2>$null
+          }
           $ReleaseExitCode = $LASTEXITCODE
           if (
             $ReleaseExitCode -ne 0 -or
