@@ -2,10 +2,31 @@
 
 Todos los cambios relevantes se documentan aquí. El proyecto sigue versionado semántico mientras la API y el formato de datos evolucionan.
 
-## [0.1.1] - 2026-07-28
+## [0.1.1] - 2026-08-03
+
+### Añadido
+
+- Acceso **Mostrar en carpeta** en cada proyecto reciente para localizar su
+  audio o vídeo original desde la pantalla principal.
+- Caché local de proyectos recientes para conservar el contenido visible
+  mientras el motor se inicia y actualiza el historial en segundo plano.
+- Prueba del motor CAM++ realmente empaquetado antes de aceptar una publicación.
 
 ### Cambiado
 
+- Arranque y apertura de proyectos optimizados: los proyectos guardados evitan
+  análisis multimedia redundantes y las voces se precargan después del primer
+  contenido visible.
+- Carga de proyectos grandes reducida a una sola consulta de palabras, con una
+  ruta rápida para texto ASCII que evita reparaciones Unicode innecesarias.
+- Verificación completa de CUDA almacenada durante la sesión para no repetir
+  comprobaciones costosas antes de cada transcripción.
+- Ajustes separa los estados de hardware, CUDA, modelos, CAM++ y Ollama para
+  evitar refrescos globales y mensajes incorrectos de instalación.
+- La grabadora detecta dispositivos y permisos en paralelo para estar lista
+  antes y conservar mensajes de error específicos por fuente.
+- El sidecar pasa a un runtime `onedir`, verificable y compartido por todas las
+  operaciones, en lugar de extraerse de nuevo en cada ejecución.
 - Candidata pública limpia para la evaluación de firma gratuita de SignPath.
 - CUDA deja de formar parte del instalador y pasa a ser una descarga opcional,
   separada, consentida, verificable y con fallback completo a CPU.

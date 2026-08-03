@@ -40,6 +40,28 @@
 > `Source code.zip`: esos archivos son para programadores. Pulsa **Descargar para
 > Windows** y comenzará directamente la descarga del instalador `.exe`.
 
+## Novedades de v0.1.1
+
+Esta candidata concentra el trabajo de estabilidad y rendimiento de la primera
+versión pública. Mantiene el procesamiento privado de `v0.1.0`, pero reduce las
+esperas visibles y hace más fiable la preparación de los motores locales.
+
+| Mejora | Resultado para el usuario |
+|---|---|
+| ⚡ **Inicio más rápido** | Los proyectos recientes aparecen desde la caché mientras el motor termina de arrancar. |
+| 🚀 **Transcripción optimizada** | CUDA, los modelos y las comprobaciones costosas se reutilizan durante la sesión en lugar de prepararse repetidamente. |
+| 📂 **Acceso directo al archivo** | Cada proyecto reciente incluye **Mostrar en carpeta** para localizar inmediatamente su audio o vídeo. |
+| 🎙️ **Grabación más ágil** | Micrófonos y fuentes de audio se detectan en paralelo y la ventana deja de esperar comprobaciones independientes. |
+| 👥 **Voces listas de verdad** | CAM++ se valida desde el runtime empaquetado y Ajustes distingue entre instalado, comprobando y pendiente. |
+| 🧭 **Ajustes estables** | Hardware, modelos, CUDA e IA local mantienen estados separados, sin refrescar toda la pantalla constantemente. |
+| 🗃️ **Proyectos grandes** | Las palabras de todos los segmentos se cargan en una sola consulta y el texto ASCII evita reparaciones Unicode innecesarias. |
+| 🛡️ **Instalador auditable** | El paquete público incluye CPU, FFmpeg y avisos legales, pero deja CUDA como descarga opcional con consentimiento. |
+
+En el equipo de desarrollo, el motor instalado estuvo disponible en torno a
+**1,05 s** y un proyecto de 1.107 segmentos pasó de aproximadamente **727 ms a
+113 ms** al abrirse. Son mediciones orientativas: el rendimiento final depende
+del disco, CPU, GPU, modelo y características del audio.
+
 ## ¿Qué hace?
 
 Transcriptor reúne en una sola aplicación de escritorio todo el recorrido de una conversación: desde el archivo original hasta una transcripción editable, sincronizada y convertida en conocimiento.
@@ -196,21 +218,21 @@ Tus archivos ──► tu ordenador ──► tus proyectos
 - Cada usuario y cada ordenador poseen su propia base de datos.
 - El repositorio y los instaladores **no contienen proyectos, grabaciones,
   perfiles, modelos ni caché del usuario**.
-- La Release heredada `v0.1.0` sí incorpora bibliotecas CUDA de NVIDIA; las
-  compilaciones actuales de `master` y las próximas versiones las excluyen y
-  sólo ofrecen descargarlas con consentimiento.
+- La Release heredada `v0.1.0` sí incorpora bibliotecas CUDA de NVIDIA;
+  `v0.1.1`, las compilaciones actuales de `master` y las versiones posteriores
+  las excluyen y sólo ofrecen descargarlas con consentimiento.
 - Desinstalar la aplicación no borra silenciosamente los proyectos personales.
 
 [Consultar la política completa de datos locales →](docs/PRIVACY.md)
 
 ## Code signing policy (política de firma)
 
-La versión pública `v0.1.0` se distribuye **sin firma de código**. La solicitud
-para el programa gratuito de SignPath Foundation está pendiente de preparación
-y evaluación: SignPath no ha aprobado todavía el proyecto y ninguna versión de
-Transcriptor afirma estar firmada por SignPath Foundation. Además, `v0.1.0`
-incluye el runtime propietario CUDA dentro de sus instaladores heredados, por
-lo que **no es candidata a recibir una firma de SignPath**.
+La versión pública `v0.1.0` y la candidata `v0.1.1` se distribuyen **sin firma
+de código**. La solicitud para el programa gratuito de SignPath Foundation
+está pendiente de evaluación: SignPath no ha aprobado todavía el proyecto y
+ninguna versión de Transcriptor afirma estar firmada por SignPath Foundation.
+Además, `v0.1.0` incluye el runtime propietario CUDA dentro de sus instaladores
+heredados, por lo que **no es candidata a recibir una firma de SignPath**.
 
 Si la solicitud se aprueba, sólo se firmarán artefactos reproducibles obtenidos
 del repositorio oficial mediante el proceso documentado, después de pasar las
@@ -267,8 +289,8 @@ después del consentimiento del usuario.
 
 > [!IMPORTANT]
 > La Release heredada `v0.1.0`, que continúa descargable, incluye cuBLAS y cuDNN
-> dentro del instalador y no está firmada. Las compilaciones actuales de
-> `master` y la próxima Release ya no incluyen esas bibliotecas propietarias.
+> dentro del instalador y no está firmada. `v0.1.1` y las compilaciones actuales
+> de `master` ya no incluyen esas bibliotecas propietarias.
 > `v0.1.0` no se presentará retroactivamente a SignPath.
 
 En las compilaciones posteriores a `v0.1.0`, si se detecta una GPU NVIDIA
@@ -290,10 +312,10 @@ sola vez. Después, la transcripción funciona localmente incluso sin conexión.
 > administradores. `checksums-SHA256.txt` sirve para comprobar la descarga y
 > los archivos `Source code` no instalan la aplicación.
 
-`v0.1.0` no está firmada y Windows SmartScreen puede mostrar “editor
-desconocido”. Una firma futura tampoco garantiza que SmartScreen deje de
-advertir inmediatamente: Windows construye la reputación con el tiempo. Antes
-de continuar, comprueba que la dirección empieza por
+`v0.1.0` y `v0.1.1` no están firmadas, por lo que Windows SmartScreen puede
+mostrar “editor desconocido”. Una firma futura tampoco garantiza que
+SmartScreen deje de advertir inmediatamente: Windows construye la reputación
+con el tiempo. Antes de continuar, comprueba que la dirección empieza por
 `https://github.com/NoelRDB/Transcriptor/`. La
 [guía para usuarios no técnicos](docs/INSTALLATION.md) explica cada pantalla y
 cómo verificar el instalador.
