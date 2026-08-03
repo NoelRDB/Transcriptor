@@ -35,6 +35,31 @@
 
 ![Demostración animada de Transcriptor](docs/assets/transcriptor-showcase.svg)
 
+## Así se ve Transcriptor
+
+<p align="center">
+  <img src="docs/assets/transcriptor-home-v0.1.1.png" width="100%" alt="Pantalla principal de Transcriptor 0.1.1 con importación de audio y vídeo, proyectos recientes y procesamiento privado">
+</p>
+
+<p align="center">
+  <sub>Pantalla principal de la versión 0.1.1: importa un archivo, retoma proyectos recientes y accede a las herramientas locales desde un único espacio de trabajo.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/assets/transcriptor-cover-v0.1.1.png" width="100%" alt="Presentación de Transcriptor 0.1.1 con el lema IA local, privacidad real">
+    </td>
+    <td width="50%">
+      <img src="docs/assets/transcriptor-features-v0.1.1.png" width="100%" alt="Funciones de Transcriptor: audio y vídeo, texto sincronizado, IA local y voces">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub>IA local y privacidad desde el diseño.</sub></td>
+    <td align="center"><sub>Audio, texto sincronizado y voces en una aplicación de escritorio.</sub></td>
+  </tr>
+</table>
+
 > [!IMPORTANT]
 > Para instalar Transcriptor no uses el botón verde **Code** ni descargues
 > `Source code.zip`: esos archivos son para programadores. Pulsa **Descargar para
