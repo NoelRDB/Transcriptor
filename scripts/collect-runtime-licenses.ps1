@@ -76,7 +76,10 @@ function ConvertTo-SafeRelativePath {
       $SafeSegment
     }
   )
-  return [System.IO.Path]::Combine($SafeSegments)
+  # PowerShell convierte un object[] implícitamente en una sola cadena al
+  # resolver esta sobrecarga. Forzar string[] conserva cada segmento como una
+  # parte real de la ruta en vez de unirlos con espacios.
+  return [System.IO.Path]::Combine([string[]]$SafeSegments)
 }
 
 function Copy-VerifiedLegalFile {
