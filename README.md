@@ -37,28 +37,55 @@
 
 ## Así se ve Transcriptor
 
-<p align="center">
-  <img src="docs/assets/transcriptor-home-v0.1.1.png" width="100%" alt="Pantalla principal de Transcriptor 0.1.1 con importación de audio y vídeo, proyectos recientes y procesamiento privado">
-</p>
+### 1. Pantalla principal: todo el trabajo a la vista
 
 <p align="center">
-  <sub>Pantalla principal de la versión 0.1.1: importa un archivo, retoma proyectos recientes y accede a las herramientas locales desde un único espacio de trabajo.</sub>
+  <img src="docs/assets/transcriptor-screen-home-v0.1.1.png" width="100%" alt="Pantalla principal de Transcriptor con importación de audio y vídeo, trabajo en curso y proyectos recientes">
 </p>
 
-<table>
-  <tr>
-    <td width="50%">
-      <img src="docs/assets/transcriptor-cover-v0.1.1.png" width="100%" alt="Presentación de Transcriptor 0.1.1 con el lema IA local, privacidad real">
-    </td>
-    <td width="50%">
-      <img src="docs/assets/transcriptor-features-v0.1.1.png" width="100%" alt="Funciones de Transcriptor: audio y vídeo, texto sincronizado, IA local y voces">
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><sub>IA local y privacidad desde el diseño.</sub></td>
-    <td align="center"><sub>Audio, texto sincronizado y voces en una aplicación de escritorio.</sub></td>
-  </tr>
-</table>
+Importa audio o vídeo arrastrándolo a la ventana, retoma proyectos recientes y
+abre la carpeta del archivo original sin abandonar la aplicación. La actividad
+del motor y la cola permanecen visibles mientras sigues trabajando.
+
+### 2. Grabadora de voz: captura ahora, procesa después
+
+<p align="center">
+  <img src="docs/assets/transcriptor-screen-recorder-v0.1.1.png" width="100%" alt="Grabadora de voz de Transcriptor con onda de audio, fuente, idioma y botón para comenzar a grabar">
+</p>
+
+Graba el micrófono, el audio del sistema o ambos. El WAV se guarda localmente y
+la transcripción, la separación de hablantes y el análisis sólo comienzan cuando
+tú lo decides.
+
+### 3. Ajustes: calidad, voces y rendimiento bajo control
+
+<p align="center">
+  <img src="docs/assets/transcriptor-screen-settings-v0.1.1.png" width="100%" alt="Ajustes de Transcriptor con modos de calidad, restauración de voz, separación de hablantes y perfiles de rendimiento">
+</p>
+
+Elige entre transcripción instantánea, profesional o de máxima fidelidad;
+configura la restauración de voz, la separación de hablantes y cuánto puede usar
+el motor de la CPU o GPU.
+
+### 4. Transcripción sincronizada: escucha, revisa y corrige
+
+<p align="center">
+  <img src="docs/assets/transcriptor-screen-transcript-v0.1.1.png" width="100%" alt="Reproductor de audio junto a una transcripción sincronizada con hablantes, tiempos y estados de revisión">
+</p>
+
+El reproductor y el texto avanzan juntos. Cada intervención conserva su tiempo,
+hablante y confianza para que puedas buscar, corregir, revisar y regresar al
+instante exacto del audio.
+
+### 5. Exportación: del texto al formato que necesita tu trabajo
+
+<p align="center">
+  <img src="docs/assets/transcriptor-screen-export-v0.1.1.png" width="100%" alt="Menú de exportación de Transcriptor con TXT, DOCX, PDF, SRT, VTT, JSON, CSV y proyectos portables">
+</p>
+
+Exporta texto limpio, Word, PDF, subtítulos, datos estructurados o una copia
+portable del proyecto. Los modos seguros permiten ocultar datos sensibles antes
+de compartir el resultado.
 
 > [!IMPORTANT]
 > Para instalar Transcriptor no uses el botón verde **Code** ni descargues
