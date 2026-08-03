@@ -991,6 +991,14 @@ mark { color: inherit; background: color-mix(in srgb, var(--accent) 45%, transpa
 .insight-list article > button { height: 29px; display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 7px; color: var(--accent); background: transparent; cursor: pointer; font: 700 9px/1 inherit; }
 .insight-list strong { font-size: 11px; }
 .insight-list p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.finding-preview { display: grid; gap: 8px; }
+.finding-preview h3 { margin: 4px 0 2px; font-size: 12px; }
+.finding-preview .finding-card, .insight-list .finding-card { border-left: 3px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.finding-card.tension, .finding-card.problem, .finding-card.risk { border-left-color: var(--danger); }
+.finding-card.agreement, .finding-card.decision { border-left-color: var(--success); }
+.finding-card.affection, .finding-card.emotion { border-left-color: #d67fc2; }
+.finding-card > div > span { display: block; margin-bottom: 5px; color: var(--accent); font-size: 8px; font-weight: 700; letter-spacing: .55px; text-transform: uppercase; }
+.finding-card blockquote { margin: 8px 0 0; padding-left: 9px; border-left: 1px solid var(--line); color: var(--muted); font-size: 9px; font-style: italic; line-height: 1.5; }
 .chapter-list > button { width: 100%; padding: 14px; display: grid; grid-template-columns: 38px 1fr 25px; gap: 12px; align-items: center; border: 1px solid var(--line-soft); border-radius: 11px; color: var(--text); background: var(--panel-raised); text-align: left; cursor: pointer; }
 .chapter-list > button:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .chapter-list > button > span { color: var(--accent); font-size: 18px; font-weight: 750; }

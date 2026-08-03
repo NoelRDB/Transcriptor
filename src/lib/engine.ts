@@ -1,4 +1,4 @@
-import type { AssistantMessage, CudaRuntimeStatus, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, InsightDepth, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RecordingChunkResult, RecordingSessionResult, RecordingSessionStarted, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison, VoiceProfileMergeResult } from "../types";
+import type { AssistantMessage, CudaRuntimeStatus, DeletedProjectResult, EngineEvent, EvidenceEvent, GlobalSearchResult, HardwareInfo, LiveChunkResult, LiveSessionResult, LiveSessionStarted, LocalAiStatus, ModelCatalog, ProjectInsights, ProjectMarker, ProjectSettings, QueueItem, QueueStatus, RecentProject, RecordingChunkResult, RecordingSessionResult, RecordingSessionStarted, RedactionPreview, SemanticSearchResponse, SpeakerAiStatus, SystemDiagnostics, TranscriptVersion, TranscriptionProject, VoiceProfile, VoiceProfileCatalog, VoiceProfileComparison, VoiceProfileMergeResult } from "../types";
 import { cacheHardwareInfo, cacheSpeakerAiStatus, loadCachedHardwareInfo, loadCachedSpeakerAiStatus } from "./localCache";
 
 type EventListener = (event: EngineEvent) => void;
@@ -188,8 +188,8 @@ class EngineClient {
   getLocalAiStatus(model = "qwen3.5:9b") {
     return this.request<LocalAiStatus>("get_local_ai_status", { model }, 30_000);
   }
-  analyzeTranscript(project: TranscriptionProject, mode: ProjectInsights["mode"], depth: InsightDepth, model = "qwen3.5:9b") {
-    return this.request<{ accepted: boolean; projectId: string }>("analyze_transcript", { project, mode, depth, model }, 60_000);
+  analyzeTranscript(project: TranscriptionProject, mode: ProjectInsights["mode"], model = "qwen3.5:9b") {
+    return this.request<{ accepted: boolean; projectId: string }>("analyze_transcript", { project, mode, depth: "deep", model }, 60_000);
   }
   cancelAnalysis(projectId: string) {
     return this.request<{ cancelled: boolean }>("cancel_analysis", { projectId });
