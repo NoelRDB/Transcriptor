@@ -5,7 +5,7 @@ import { routeEngineEvent } from "./lib/engineEvents";
 import { displayName, mediaKind, MEDIA_FILTERS, safeBaseName } from "./lib/media";
 import { downloadText, exportProject, type ExportFormat, type TextExportFormat } from "./lib/exporters";
 import { useAppStore } from "./store";
-import { DEFAULT_PROJECT_SETTINGS, type AnalysisProgress, type AppSettings, type AssistantAnswer, type AssistantMessage, type InsightDepth, type LocalAiStatus, type ProjectInsights, type QualityMode, type RecordingSessionResult, type SystemDiagnostics, type TranscriptionProject } from "./types";
+import { DEFAULT_PROJECT_SETTINGS, type AnalysisProgress, type AppSettings, type AssistantAnswer, type AssistantMessage, type InsightMode, type LocalAiStatus, type ProjectInsights, type QualityMode, type RecordingSessionResult, type SystemDiagnostics, type TranscriptionProject } from "./types";
 import { Toolbar } from "./components/Toolbar";
 import { Welcome } from "./components/Welcome";
 import { MediaPlayer } from "./components/MediaPlayer";
@@ -38,7 +38,6 @@ export default function App() {
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightMode, setInsightMode] = useState<ProjectInsights["mode"]>("general");
-  const [insightDepth, setInsightDepth] = useState<InsightDepth>("deep");
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
   const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
@@ -531,7 +530,7 @@ export default function App() {
     setAnalysisProgress(null);
     setAnalysisStartedAt(Date.now());
     try {
-      await engine.analyzeTranscript(store.project, insightMode, insightDepth);
+      await engine.analyzeTranscript(store.project, insightMode);
     } catch (error) {
       store.setError(error instanceof Error ? error.message : String(error));
       setInsightsLoading(false);
@@ -719,7 +718,7 @@ export default function App() {
   }
 
   return <div className={`app-shell ${store.error ? "has-error" : ""}`}>
-    <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(store.project?.insights?.mode ?? "general"); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onRenameProject={renameCurrentProject} onShowProjects={() => store.setProject(null)} />
+    <Toolbar project={store.project} jobState={store.progress.state} isDirty={store.isDirty} onOpen={() => openMedia()} onBrowserFile={openBrowserFile} onTranscribe={() => void transcribe()} onCancel={cancel} onExport={exportTranscript} onInsights={() => { setInsightMode(normalizeInsightMode(store.project?.insights?.mode)); setShowInsights(true); }} onLive={() => void openLiveRecorder()} onVoices={() => setShowVoices(true)} onSettings={() => setShowSettings(true)} onDiagnostics={() => void openDiagnostics()} onRenameProject={renameCurrentProject} onShowProjects={() => store.setProject(null)} />
     {store.error && <div className="error-banner" role="alert"><AlertTriangle size={18} /><span>{store.error}</span><button onClick={() => store.setError(null)} aria-label="Cerrar"><X size={17} /></button></div>}
     {store.notice && !store.error && <div className="notice-banner" role="status"><Info size={18} /><span>{store.notice}</span><button onClick={() => store.setNotice(null)} aria-label="Cerrar aviso"><X size={17} /></button></div>}
     {!store.project ? <Welcome recent={store.recentProjects} loading={recentProjectsLoading} onOpen={() => engine.available ? openMedia() : document.querySelector<HTMLInputElement>('input[type="file"]')?.click()} onOpenRecent={openRecent} onRevealRecent={revealRecent} onDeleteRecent={deleteRecent} onDropPath={openMedia} onImportFiles={queueMediaFiles} /> :
@@ -741,7 +740,7 @@ export default function App() {
       onClose={() => setShowSettings(false)}
     />}
     {showVoices && <VoicesDialog settings={store.settings} project={store.project} appBusy={["analyzing", "waiting_model", "transcribing"].includes(store.progress.state)} onChange={changeSettings} onBeforeLearn={saveBeforeVoiceLearning} onClose={() => setShowVoices(false)} />}
-    {showInsights && store.project && <InsightsDialog insights={store.project.insights ?? null} loading={insightsLoading} mode={insightMode} depth={insightDepth} progress={analysisProgress} analysisStartedAt={analysisStartedAt} aiStatus={localAiStatus} paragraphCount={store.project.segments.length} onModeChange={setInsightMode} onDepthChange={setInsightDepth} onAnalyze={analyzeTranscript} onCancelAnalysis={cancelAnalysis} onGroupParagraphs={groupIntoParagraphs} assistantAnswers={assistantAnswers} assistantLoading={assistantLoading} onAsk={(question) => void askTranscript(question)} onSeek={(milliseconds) => { seek(milliseconds); setShowInsights(false); }} onClose={() => setShowInsights(false)} />}
+    {showInsights && store.project && <InsightsDialog insights={store.project.insights ?? null} loading={insightsLoading} mode={insightMode} progress={analysisProgress} analysisStartedAt={analysisStartedAt} aiStatus={localAiStatus} paragraphCount={store.project.segments.length} onModeChange={setInsightMode} onAnalyze={analyzeTranscript} onCancelAnalysis={cancelAnalysis} onGroupParagraphs={groupIntoParagraphs} assistantAnswers={assistantAnswers} assistantLoading={assistantLoading} onAsk={(question) => void askTranscript(question)} onSeek={(milliseconds) => { seek(milliseconds); setShowInsights(false); }} onClose={() => setShowInsights(false)} />}
     {showLive && <LiveRecorderDialog language={store.settings.defaultLanguage} audioSource={store.settings.liveAudioSource} onAudioSourceChange={(source) => store.setSettings({ liveAudioSource: source })} onLanguageChange={(language) => store.setSettings({ defaultLanguage: language })} onComplete={(result) => void completeLiveRecording(result)} onClose={() => setShowLive(false)} />}
     {showDiagnostics && <DiagnosticsDialog project={store.project} diagnostics={diagnostics} loading={diagnosticsLoading} onRun={() => void runDiagnostics()} onRelocate={() => void relocateProjectMedia()} onUseCandidate={(path) => void relocateProjectMedia(path)} onClose={() => setShowDiagnostics(false)} />}
     {showModelSetup && <ModelSetupDialog
@@ -768,6 +767,14 @@ export default function App() {
       }}
     />}
   </div>;
+}
+
+function normalizeInsightMode(mode: string | undefined): InsightMode {
+  if (["general", "interview", "friends", "couple", "podcast", "diary", "legal", "problems"].includes(mode ?? "")) {
+    return mode as InsightMode;
+  }
+  if (mode === "personal") return "diary";
+  return "general";
 }
 
 function projectSettingsFromApp(settings: AppSettings): TranscriptionProject["settings"] {

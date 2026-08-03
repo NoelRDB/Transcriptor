@@ -153,15 +153,20 @@ def analyze_transcript(project: dict[str, Any], mode: str = "general") -> dict[s
         "affectionMarkers": sum(token_counter[_fold(word)] for word in _AFFECTION),
         "tensionMarkers": sum(token_counter[_fold(word)] for word in _TENSION),
     }
-    summary = " ".join(_shorten(str(segments[index]["text"]), 220) for index in selected_by_time)
+    summary_parts = []
+    for index in selected_by_time:
+        sentence = _shorten(str(segments[index]["text"]), 220).strip()
+        if sentence and sentence[-1] not in ".!?…":
+            sentence += "."
+        summary_parts.append(sentence)
+    summary = "\n\n".join(summary_parts)
     word_count = len(re.findall(r"\S+", full_text))
     return {
         "projectId": str(project["id"]),
         "generatedAt": datetime.now(UTC).isoformat(),
         "method": "local-extractive-v1",
         "mode": mode
-        if mode
-        in {"general", "conversation", "meeting", "interview", "class", "podcast", "personal", "legal"}
+        if mode in {"general", "interview", "friends", "couple", "podcast", "diary", "legal", "problems"}
         else "general",
         "summary": summary,
         "keyPoints": key_points,
@@ -174,6 +179,7 @@ def analyze_transcript(project: dict[str, Any], mode: str = "general") -> dict[s
             "paragraphCount": len(segments),
             "questions": signals["questions"],
             "wordsPerMinute": round(word_count / max(duration_ms / 60_000, 0.1)),
+            "durationMinutes": round(duration_ms / 60_000, 1),
         },
         "notice": (
             "Análisis local basado únicamente en el texto. Son indicios, no hechos psicológicos "

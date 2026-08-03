@@ -140,18 +140,27 @@ export interface InsightChapter {
   description: string;
 }
 
+export type InsightMode = "general" | "interview" | "friends" | "couple" | "podcast" | "diary" | "legal" | "problems";
+
+export interface InsightFinding extends InsightPoint {
+  kind: "topic" | "tension" | "agreement" | "affection" | "emotion" | "question" | "decision" | "risk" | "problem" | "fact";
+  evidence: string;
+  confidence: "explicit" | "contextual";
+}
+
 export interface ProjectInsights {
   projectId: string;
   generatedAt: string;
   method: string;
-  mode: "general" | "conversation" | "meeting" | "interview" | "class" | "podcast" | "personal" | "legal";
+  mode: InsightMode;
   summary: string;
+  findings?: InsightFinding[];
   keyPoints: InsightPoint[];
   chapters: InsightChapter[];
   concepts: Array<{ id: string; label: string; weight: number }>;
   conceptEdges: Array<{ source: string; target: string; weight: number }>;
   signals: { questions: number; agreements: number; affectionMarkers: number; tensionMarkers: number };
-  statistics: { wordCount: number; paragraphCount: number; questions: number; wordsPerMinute: number };
+  statistics: { wordCount: number; paragraphCount: number; questions: number; wordsPerMinute: number; durationMinutes?: number };
   notice: string;
   depth?: "quick" | "deep";
   model?: string;
