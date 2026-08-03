@@ -8,7 +8,7 @@
   **Reproduce · transcribe · identifica hablantes · comprende · edita · exporta**
 
   [![CI](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml/badge.svg)](https://github.com/NoelRDB/Transcriptor/actions/workflows/ci.yml)
-  [![Candidata v0.1.1](https://img.shields.io/badge/candidata-v0.1.1-f4a261)](https://github.com/NoelRDB/Transcriptor/releases/tag/v0.1.1)
+  [![Versión v0.1.1](https://img.shields.io/badge/candidata-v0.1.1-f4a261)](https://github.com/NoelRDB/Transcriptor/releases/tag/v0.1.1)
   [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows11&logoColor=white)](#instalación)
   [![Privacidad](https://img.shields.io/badge/privacidad-100%25%20local-cbff3d)](#privacidad-por-diseño)
   [![Tauri](https://img.shields.io/badge/Tauri-2.11-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
