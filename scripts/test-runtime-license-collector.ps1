@@ -80,6 +80,11 @@ try {
   if (($AllPaths | Sort-Object -Unique).Count -ne $AllPaths.Count) {
     throw "El manifiesto contiene una colisión de destinos."
   }
+  $ExpectedNestedLicense =
+    "python/alpha-package-1.0.0/wheel/licenses/vendor/LICENSE.txt"
+  if ($ExpectedNestedLicense -cnotin $AllPaths) {
+    throw "El recolector no conservó la jerarquía de una licencia anidada."
+  }
   if ($AllPaths -match "(?i)(?:^|/)av(?:-|/)") {
     throw "El recolector copió una dependencia excluida."
   }
